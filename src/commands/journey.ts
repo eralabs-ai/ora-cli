@@ -3,9 +3,9 @@ import {
 	type JourneyInsight,
 	type JourneyRun,
 	type JourneyStep,
+	launchJourney,
 	type RunSpend,
 	type RunSummary,
-	launchJourney,
 } from "../api/platform";
 import { flow, squeeze, stdoutWidth } from "../ui/ansi";
 import {

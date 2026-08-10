@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type RawRunStep, decodeEventBlock, launchJourney } from "./platform";
+import { decodeEventBlock, launchJourney, type RawRunStep } from "./platform";
 
 // The run stream is *named* SSE — `event: X` + `data: {json}` blocks with
 // `: ping` heartbeat comments in between. A different framing from the scan
@@ -186,7 +186,12 @@ describe("launchJourney", () => {
 				String(at).endsWith("/experiment/v1/runs") &&
 				(init as { method?: string })?.method === "POST",
 		);
-		expect(JSON.parse((create?.[1] as { body: string }).body)).toEqual({
+		// Assert the call exists before reaching into it, so a missing POST fails
+		// as a missing POST rather than a TypeError three frames deep.
+		expect(create).toBeDefined();
+
+		const [, init] = create as [unknown, { body: string }];
+		expect(JSON.parse(init.body)).toEqual({
 			intent: "Locate the REST API reference",
 			domain: "acme.dev",
 			harness: "claude-code",

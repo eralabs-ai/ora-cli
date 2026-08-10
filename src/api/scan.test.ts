@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type ScanResult, performScan } from "./scan";
+import { performScan, type ScanResult } from "./scan";
 
 // The scan stream is data-only SSE: every block is just `data: {json}` with a
 // `type` field inside — no `event:` names.
