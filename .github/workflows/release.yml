@@ -39,6 +39,12 @@ jobs:
     permissions:
       contents: write # push the bump commit + tag, create the GitHub Release
       id-token: write # OIDC token for npm provenance attestation
+    env:
+      # setup-node writes an .npmrc referencing ${NODE_AUTH_TOKEN}, so every npm and
+      # pnpm call warns until something defines it. The publish step overrides this
+      # with the real token; an empty default just keeps the secret scoped there
+      # while removing a warning that otherwise buries real errors in the log.
+      NODE_AUTH_TOKEN: ""
     steps:
       - name: Guard — releases ship from main only
         if: github.ref != 'refs/heads/main'
@@ -92,6 +98,18 @@ jobs:
             echo "tag=v$version"
             echo "name=$(node -p "require('./package.json').name")"
           } >> "$GITHUB_OUTPUT"
+
+      # `npm version` re-serialises package.json with npm's own formatting, which
+      # expands arrays that biome keeps inline. Without this, the release commits a
+      # file that fails `pnpm lint` — and since the gate above runs *before* the
+      # bump, the break only surfaces on the next release. Normalise, then re-run
+      # the linter over the bumped tree so it can never ship unformatted again.
+      - name: Normalise formatting after bump
+        if: inputs.version_bump != 'none'
+        run: |
+          set -euo pipefail
+          pnpm lint:fix
+          pnpm lint
 
       # Fail before publishing rather than halfway through it.
       - name: Preflight — tag and registry collision check
@@ -153,12 +171,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # `none` leaves package.json untouched, so there is nothing to commit.
-          if git diff --quiet -- package.json; then
-            echo "No version change to commit; tagging current HEAD"
+          # Stage everything tracked that changed — the bump plus any formatting the
+          # normalise step applied — so the commit can never be a partial snapshot
+          # of what was just published. .gitignore keeps dist/ and coverage/ out.
+          # `none` leaves the tree untouched, so there is nothing to commit.
+          if git diff --quiet HEAD; then
+            echo "No changes to commit; tagging current HEAD"
           else
-            git add package.json
+            git add -A
             git commit -m "chore(release): $TAG [skip ci]"
+            echo "Committed:"
+            git show --stat --oneline HEAD | tail -n +2
           fi
 
           git tag -a "$TAG" -m "Release $TAG"
