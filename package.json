@@ -1,13 +1,16 @@
 {
 	"name": "@ora-ai/ax",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Score any site's agent readiness and watch real AI agents navigate it — powered by ora",
 	"type": "module",
 	"packageManager": "pnpm@10.34.5",
 	"bin": {
 		"ax": "./dist/main.cjs"
 	},
-	"files": ["dist", ".env.example"],
+	"files": [
+		"dist",
+		".env.example"
+	],
 	"engines": {
 		"node": ">=20.0.0"
 	},
@@ -36,7 +39,10 @@
 		"access": "public"
 	},
 	"pnpm": {
-		"onlyBuiltDependencies": ["@biomejs/biome", "esbuild"]
+		"onlyBuiltDependencies": [
+			"@biomejs/biome",
+			"esbuild"
+		]
 	},
 	"license": "MIT",
 	"homepage": "https://ora.ai",
