@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ScanResult } from "../api/scan";
-import { type AuditCheck, ratingFor, sectionOf, toAuditReport } from "./model";
+import { type ReportCheck, ratingFor, sectionOf, toReport } from "./model";
 
 const SCAN: ScanResult = {
 	domain: "acme.dev",
@@ -60,11 +60,11 @@ const SCAN: ScanResult = {
 	],
 };
 
-const pick = (checks: AuditCheck[], name: string) => checks.find((c) => c.name === name);
+const pick = (checks: ReportCheck[], name: string) => checks.find((c) => c.name === name);
 
-describe("toAuditReport", () => {
+describe("toReport", () => {
 	it("turns layers into sections and keeps score + rating", () => {
-		const report = toAuditReport(SCAN, "https://acme.dev");
+		const report = toReport(SCAN, "https://acme.dev");
 		expect(report.url).toBe("https://acme.dev");
 		expect(report.score).toBe(82);
 		expect(report.rating).toBe("Good");
@@ -72,7 +72,7 @@ describe("toAuditReport", () => {
 	});
 
 	it("counts pass/fail/skip with na+pending excluded and warning as a failure", () => {
-		const [section] = toAuditReport(SCAN, "x").sections;
+		const [section] = toReport(SCAN, "x").sections;
 		expect(section.passed).toBe(1);
 		expect(section.total).toBe(3); // mcp endpoint (na) is out of the denominator
 		expect(section.skipped).toBe(1);
@@ -81,7 +81,7 @@ describe("toAuditReport", () => {
 	});
 
 	it("keeps the raw status, estScoreGain, and summary", () => {
-		const report = toAuditReport(SCAN, "x");
+		const report = toReport(SCAN, "x");
 		expect(report.summary).toBe("acme.dev greets agents well but hides its spec.");
 		const checks = report.sections[0].checks;
 		expect(pick(checks, "agent gateway")?.status).toBe("pass");
@@ -90,7 +90,7 @@ describe("toAuditReport", () => {
 	});
 
 	it("takes the fix from `recommendation`, never from `description`", () => {
-		const checks = toAuditReport(SCAN, "x").sections[0].checks;
+		const checks = toReport(SCAN, "x").sections[0].checks;
 		const mirror = pick(checks, "markdown mirror");
 		expect(mirror?.detail).toBe("0 of 12 pages mirrored");
 		expect(mirror?.hint).toBe("Serve a .md variant of each documentation page");
@@ -100,17 +100,17 @@ describe("toAuditReport", () => {
 	});
 
 	it("derives tiers from each check's weight within its layer", () => {
-		const checks = toAuditReport(SCAN, "x").sections[0].checks;
+		const checks = toReport(SCAN, "x").sections[0].checks;
 		expect(pick(checks, "agent gateway")?.tier).toBe("required"); // 10/10
 		expect(pick(checks, "markdown mirror")?.tier).toBe("recommended"); // 6/10
 		expect(pick(checks, "crawler policy")?.tier).toBe("recommended"); // 4/10
 	});
 
 	it("clamps scores into 0-100 and falls back to the requested URL", () => {
-		expect(toAuditReport({ score: 140, layers: [] }, "x").score).toBe(100);
-		expect(toAuditReport({ score: -5, layers: [] }, "x").score).toBe(0);
-		expect(toAuditReport({ score: 50 }, "https://asked.example").url).toBe("https://asked.example");
-		expect(toAuditReport({ score: 50, layers: [] }, "x").sections).toEqual([]);
+		expect(toReport({ score: 140, layers: [] }, "x").score).toBe(100);
+		expect(toReport({ score: -5, layers: [] }, "x").score).toBe(0);
+		expect(toReport({ score: 50 }, "https://asked.example").url).toBe("https://asked.example");
+		expect(toReport({ score: 50, layers: [] }, "x").sections).toEqual([]);
 	});
 });
 
@@ -128,7 +128,7 @@ describe("ratingFor", () => {
 });
 
 describe("sectionOf", () => {
-	const entry = (name: string, passed: boolean, skipped = false): AuditCheck => ({
+	const entry = (name: string, passed: boolean, skipped = false): ReportCheck => ({
 		name,
 		passed,
 		skipped: skipped || undefined,

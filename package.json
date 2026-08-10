@@ -50,6 +50,6 @@
 		"llms.txt",
 		"ora",
 		"cli",
-		"audit"
+		"scan"
 	]
 }

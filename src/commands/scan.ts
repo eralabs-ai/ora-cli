@@ -1,10 +1,10 @@
 import { performScan } from "../api/scan";
-import { auditReportJson } from "../report/json";
-import { type AuditReport, toAuditReport } from "../report/model";
-import { renderAuditReport } from "../report/terminal";
+import { reportJson } from "../report/json";
+import { type Report, toReport } from "../report/model";
+import { renderReport } from "../report/terminal";
 import { spinner } from "../ui/spinner";
 
-export interface AuditCommandInput {
+export interface ScanCommandInput {
 	url: string;
 	json: boolean;
 	minScore: number | null;
@@ -14,29 +14,29 @@ export interface AuditCommandInput {
 
 // Exit codes: 0 scan ok (and above --min-score when given) · 1 under the
 // threshold · 2 anything went wrong.
-export async function auditCommand(input: AuditCommandInput): Promise<number> {
+export async function scanCommand(input: ScanCommandInput): Promise<number> {
 	const target = input.url.replace(/\/+$/, "");
 	const interactive = !input.json;
 
 	if (interactive) spinner.start(`Scanning ${target} with ora`);
 
-	let report: AuditReport;
+	let report: Report;
 	try {
 		const scan = await performScan(target, {
 			progress: interactive ? (line) => spinner.update(line) : undefined,
 		});
-		report = toAuditReport(scan, target);
+		report = toReport(scan, target);
 	} catch (cause) {
 		spinner.stop();
-		console.error(`Audit failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+		console.error(`Scan failed: ${cause instanceof Error ? cause.message : String(cause)}`);
 		return 2;
 	}
 	spinner.stop();
 
 	if (input.json) {
-		process.stdout.write(`${auditReportJson(report)}\n`);
+		process.stdout.write(`${reportJson(report)}\n`);
 	} else {
-		for (const line of renderAuditReport(report, {
+		for (const line of renderReport(report, {
 			showSkipped: input.showSkipped,
 			showPassing: input.showPassing,
 		})) {

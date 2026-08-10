@@ -1,4 +1,4 @@
-import type { AuditReport } from "./model";
+import type { Report } from "./model";
 
 // The machine-readable result. Deliberately complete: every check — passing,
 // failing, or skipped — is present no matter which --show-* flags were given,
@@ -11,7 +11,7 @@ function slugOf(name: string): string {
 		.replace(/^_|_$/g, "");
 }
 
-export function auditReportJson(report: AuditReport): string {
+export function reportJson(report: Report): string {
 	const body = {
 		url: report.url,
 		score: report.score,

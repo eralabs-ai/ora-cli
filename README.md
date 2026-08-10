@@ -3,18 +3,18 @@
 Score any site's agent readiness — and watch real AI agents navigate it. Powered by [ora](https://ora.ai)'s hosted APIs.
 
 ```
-npx @ora-ai/ax audit https://stripe.com
+npx @ora-ai/ax scan https://stripe.com
 ```
 
 Two commands:
 
-- **`audit <url>`** — run ora's hosted agent-readiness scan against a site: live progress, then a layered report of what passed, what's broken, and exactly how to fix it (or `--json`). No account or API key needed.
+- **`scan <url>`** — run ora's hosted agent-readiness scan against a site: live progress, then a layered report of what passed, what's broken, and exactly how to fix it (or `--json`). No account or API key needed.
 - **`journey "<intent>"`** — send a real AI agent (claude-code, codex, …) at a site and watch its navigation live as a boxed node-graph, then get the scored insight, tokens, and cost. Requires an `ORA_API_KEY`.
 
-## audit
+## scan
 
 ```
-ax audit <url> [--json] [--min-score n] [--show-passing] [--show-skipped]
+ax scan <url> [--json] [--min-score n] [--show-passing] [--show-skipped]
 ```
 
 ```
@@ -113,7 +113,7 @@ All configuration is environment-first: the consumer defines the variables, the 
 
 | Var | Used by | Default | Purpose |
 |---|---|---|---|
-| `ORA_API_URL` | audit | `https://ora.ai` | Public scan API base (no auth) |
+| `ORA_API_URL` | scan | `https://ora.ai` | Public scan API base (no auth) |
 | `ORA_PLATFORM_URL` | journey | `https://api.staging.agentfront.sh` | Authenticated platform API base |
 | `ORA_API_KEY` | journey | — (required) | Secret key (`ora_sk_…`), exchanged for a short-lived bearer token |
 
@@ -121,8 +121,8 @@ All configuration is environment-first: the consumer defines the variables, the 
 
 | Code | Meaning |
 |---|---|
-| `0` | audit: scan ok (and ≥ `--min-score` if set) · journey: run outcome `success` |
-| `1` | audit: score below `--min-score` · journey: run finished with a non-success outcome |
+| `0` | scan: ok (and ≥ `--min-score` if set) · journey: run outcome `success` |
+| `1` | scan: score below `--min-score` · journey: run finished with a non-success outcome |
 | `2` | any error (bad flag value, API failure, timeout) |
 
 ## Development
@@ -134,17 +134,17 @@ pnpm test:ci         # single run + coverage
 pnpm typecheck
 pnpm lint
 pnpm build           # tsup → dist/main.cjs (single self-contained binary)
-node dist/main.cjs audit https://example.com
+node dist/main.cjs scan https://example.com
 ```
 
 Manual testing without burning the live scan rate limit:
 
 ```sh
 node scripts/mock-scan-server.mjs &
-ORA_API_URL=http://localhost:8799 node dist/main.cjs audit https://stripe.com
+ORA_API_URL=http://localhost:8799 node dist/main.cjs scan https://stripe.com
 ```
 
-To exercise the published-package experience locally: `npm pack`, then `npx ./ora-ai-ax-0.1.0.tgz audit https://example.com`, or `pnpm link --global` and use `ax` directly.
+To exercise the published-package experience locally: `npm pack`, then `npx ./ora-ai-ax-0.1.0.tgz scan https://example.com`, or `pnpm link --global` and use `ax` directly.
 
 ## License
 

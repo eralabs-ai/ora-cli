@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { auditReportJson } from "./json";
-import type { AuditReport } from "./model";
+import { reportJson } from "./json";
+import type { Report } from "./model";
 
-const REPORT: AuditReport = {
+const REPORT: Report = {
 	url: "https://acme.dev",
 	score: 75,
 	rating: "Good",
@@ -38,9 +38,9 @@ const REPORT: AuditReport = {
 	],
 };
 
-describe("auditReportJson", () => {
+describe("reportJson", () => {
 	it("emits the full result with snake_cased category keys", () => {
-		const body = JSON.parse(auditReportJson(REPORT));
+		const body = JSON.parse(reportJson(REPORT));
 		expect(body.url).toBe("https://acme.dev");
 		expect(body.score).toBe(75);
 		expect(body.rating).toBe("Good");
@@ -50,7 +50,7 @@ describe("auditReportJson", () => {
 	});
 
 	it("includes every check — passed, failed, and skipped — regardless of view flags", () => {
-		const body = JSON.parse(auditReportJson(REPORT));
+		const body = JSON.parse(reportJson(REPORT));
 		const checks = body.categories.agent_access.checks;
 		expect(checks).toHaveLength(4);
 		expect(checks[2]).toMatchObject({
@@ -67,11 +67,11 @@ describe("auditReportJson", () => {
 	});
 
 	it("slugs multi-word and punctuated section names", () => {
-		const twisted: AuditReport = {
+		const twisted: Report = {
 			...REPORT,
 			sections: [{ ...REPORT.sections[0], name: "  Découverte & Reach!  " }],
 		};
-		const body = JSON.parse(auditReportJson(twisted));
+		const body = JSON.parse(reportJson(twisted));
 		expect(Object.keys(body.categories)).toEqual(["d_couverte_reach"]);
 	});
 });
