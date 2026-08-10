@@ -42,8 +42,14 @@ check("bin has a node shebang", () => {
 });
 
 check("--version matches package.json", () => {
-	const actual = ax(["--version"]);
-	if (actual !== expectedVersion) throw new Error(`got "${actual}", want "${expectedVersion}"`);
+	// citty prints through consola, which tags lines as "[log] 0.1.0" whenever CI
+	// is set and prints a bare "0.1.0" otherwise. Match the semver rather than the
+	// whole line so this asserts the same thing on a laptop and on a runner.
+	const raw = ax(["--version"]);
+	const actual = raw.match(/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/)?.[0];
+	if (actual !== expectedVersion) {
+		throw new Error(`got ${JSON.stringify(raw)}, want "${expectedVersion}"`);
+	}
 });
 
 check("--help exits 0 and lists both commands", () => {
