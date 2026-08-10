@@ -29,7 +29,7 @@
 		"citty": "^0.1",
 		"picocolors": "^1",
 		"tsup": "^8",
-		"typescript": "^5.8",
+		"typescript": "^7.0",
 		"vitest": "^3"
 	},
 	"publishConfig": {
