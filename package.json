@@ -7,7 +7,10 @@
 	"bin": {
 		"ax": "./dist/main.cjs"
 	},
-	"files": ["dist", ".env.example"],
+	"files": [
+		"dist",
+		".env.example"
+	],
 	"engines": {
 		"node": ">=20.12.0"
 	},
@@ -36,7 +39,10 @@
 		"access": "public"
 	},
 	"pnpm": {
-		"onlyBuiltDependencies": ["@biomejs/biome", "esbuild"]
+		"onlyBuiltDependencies": [
+			"@biomejs/biome",
+			"esbuild"
+		]
 	},
 	"license": "MIT",
 	"homepage": "https://ora.ai",
