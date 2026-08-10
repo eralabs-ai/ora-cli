@@ -1,0 +1,200 @@
+name: Release
+
+# Publishing is a deliberate act: manual dispatch only, from main only.
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: "Semver bump to apply before publishing"
+        required: true
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+          # Publishes package.json's current version untouched. Needed for the
+          # very first release (so 0.1.0 ships as 0.1.0), and to retry a release
+          # that died after the bump commit landed.
+          - none
+      dry_run:
+        description: "Rehearse only — build and validate, publish and push nothing"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Never cancel a release mid-flight; a half-finished publish is the one state
+# with no clean recovery.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the bump commit + tag, create the GitHub Release
+      id-token: write # OIDC token for npm provenance attestation
+    steps:
+      - name: Guard — releases ship from main only
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Release must be dispatched from main (got ${{ github.ref }})"
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history + tags: the preflight check needs to see existing tags.
+          fetch-depth: 0
+          # Credentials are kept (unlike CI) — this job pushes.
+          persist-credentials: true
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+
+      - run: pnpm install --frozen-lockfile
+
+      # Re-run the full gate here rather than trusting a green CI run on the same
+      # SHA: dispatch can happen long after CI, and npm versions are forever.
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test:ci
+
+      - name: Resolve release version
+        id: version
+        env:
+          BUMP: ${{ inputs.version_bump }}
+        run: |
+          set -euo pipefail
+          if [ "$BUMP" = "none" ]; then
+            version=$(node -p "require('./package.json').version")
+            echo "Publishing current version unchanged: $version"
+          else
+            version=$(npm version "$BUMP" --no-git-tag-version | sed 's/^v//')
+            echo "Bumped ($BUMP) -> $version"
+          fi
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "name=$(node -p "require('./package.json').name")"
+          } >> "$GITHUB_OUTPUT"
+
+      # Fail before publishing rather than halfway through it.
+      - name: Preflight — tag and registry collision check
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          PKG: ${{ steps.version.outputs.name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Tag $TAG already exists — pick a different bump"
+            exit 1
+          fi
+          if npm view "$PKG@$VERSION" version >/dev/null 2>&1; then
+            echo "::error::$PKG@$VERSION is already on npm — versions cannot be reused"
+            exit 1
+          fi
+          echo "Clear to publish $PKG@$VERSION as $TAG"
+
+      # Strictly after the bump: tsup inlines package.json, so building earlier
+      # would ship a binary that reports the previous version.
+      - name: Build
+        run: pnpm build
+
+      - name: Smoke test bundled CLI
+        run: pnpm smoke
+
+      # Catches publishing an unbuilt or truncated bundle — npm would accept it
+      # silently and break every `npx @ora-ai/ax`. Last chance while the version
+      # is still free; once published it can never be reused.
+      - name: Verify publishable tarball
+        run: pnpm verify:pack
+
+      - name: Publish to npm
+        env:
+          # Swap for OIDC Trusted Publishing later — see RELEASING.md. The
+          # id-token permission this job already holds is the only other
+          # requirement, so the migration is deleting these two lines.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            # No --provenance: attestations require a real publish to sign.
+            npm publish --access public --dry-run
+          else
+            npm publish --access public --provenance
+          fi
+
+      # Push only after npm accepted the publish. npm versions are immutable and
+      # effectively unrecoverable; a local commit and tag cost nothing to discard.
+      # If this step fails, npm has the release and git does not — see RELEASING.md.
+      - name: Commit, tag and push
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # `none` leaves package.json untouched, so there is nothing to commit.
+          if git diff --quiet -- package.json; then
+            echo "No version change to commit; tagging current HEAD"
+          else
+            git add package.json
+            git commit -m "chore(release): $TAG [skip ci]"
+          fi
+
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin HEAD:main
+          git push origin "$TAG"
+
+      - name: Create GitHub Release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag
+
+      - name: Summary
+        if: always()
+        env:
+          PKG: ${{ steps.version.outputs.name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          BUMP: ${{ inputs.version_bump }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "## Release ${TAG:-(not reached)}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Package | \`${PKG:-?}\` |"
+            echo "| Version | \`${VERSION:-?}\` |"
+            echo "| Bump | \`$BUMP\` |"
+            echo "| Dry run | \`$DRY_RUN\` |"
+            echo "| Result | ${{ job.status }} |"
+            echo ""
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "Rehearsal only — nothing was published, committed or tagged."
+            else
+              echo "https://www.npmjs.com/package/${PKG:-}/v/${VERSION:-}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

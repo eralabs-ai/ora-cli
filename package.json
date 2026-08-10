@@ -13,6 +13,8 @@
 	},
 	"scripts": {
 		"build": "rm -rf dist && tsup",
+		"smoke": "node scripts/smoke.mjs",
+		"verify:pack": "node scripts/verify-pack.mjs",
 		"test": "vitest",
 		"test:ci": "vitest run --coverage",
 		"lint": "biome check .",
