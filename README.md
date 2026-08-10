@@ -133,6 +133,8 @@ pnpm test:ci         # single run + coverage
 pnpm typecheck
 pnpm lint
 pnpm build           # tsup → dist/main.cjs (single self-contained binary)
+pnpm smoke           # run the built binary the way a user would (needs build)
+pnpm verify:pack     # check the tarball npm would publish (needs build)
 node dist/main.cjs scan https://example.com
 ```
 
@@ -144,6 +146,12 @@ ORA_API_URL=http://localhost:8799 node dist/main.cjs scan https://stripe.com
 ```
 
 To exercise the published-package experience locally: `npm pack`, then `npx ./ora-ai-ax-0.1.0.tgz scan https://example.com`, or `pnpm link --global` and use `ax` directly.
+
+## Releasing
+
+Publishing runs from GitHub Actions only — **Actions → Release → Run workflow**,
+pick a `patch`/`minor`/`major` bump. See [RELEASING.md](RELEASING.md) for the
+runbook, required setup, and failure recovery.
 
 ## License
 
