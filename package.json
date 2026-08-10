@@ -1,0 +1,55 @@
+{
+	"name": "@ora-ai/ax",
+	"version": "0.1.0",
+	"description": "Score any site's agent readiness and watch real AI agents navigate it — powered by ora",
+	"type": "module",
+	"packageManager": "pnpm@10.34.5",
+	"bin": {
+		"ax": "./dist/main.cjs"
+	},
+	"files": ["dist", ".env.example"],
+	"engines": {
+		"node": ">=20.0.0"
+	},
+	"scripts": {
+		"build": "rm -rf dist && tsup",
+		"test": "vitest",
+		"test:ci": "vitest run --coverage",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"typecheck": "tsc --noEmit",
+		"prepublishOnly": "npm run build"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9",
+		"@types/node": "^22",
+		"@vitest/coverage-v8": "^3",
+		"citty": "^0.1",
+		"picocolors": "^1",
+		"tsup": "^8",
+		"typescript": "^5.8",
+		"vitest": "^3"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"pnpm": {
+		"onlyBuiltDependencies": ["@biomejs/biome", "esbuild"]
+	},
+	"license": "MIT",
+	"homepage": "https://ora.ai",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/eralabs-ai/ora-cli.git"
+	},
+	"keywords": [
+		"ai",
+		"agents",
+		"agent-readiness",
+		"agent-experience",
+		"llms.txt",
+		"ora",
+		"cli",
+		"audit"
+	]
+}
