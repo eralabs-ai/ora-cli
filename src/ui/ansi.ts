@@ -31,7 +31,7 @@ export function flow(value: string, max: number): string[] {
 }
 
 /**
- * Pulse frames shared by the audit spinner and the journey panel — a breathing
+ * Pulse frames shared by the scan spinner and the journey panel — a breathing
  * diamond, echoing the ◆ intent marker in the journey graph. Every frame is a
  * single-cell glyph so `.length` math stays valid; frames are doubled so the
  * pulse breathes smoothly at the 80ms tick.

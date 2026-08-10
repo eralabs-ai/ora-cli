@@ -1,5 +1,5 @@
 import pc from "picocolors";
-import { type AuditCheck, type AuditReport, type AuditSection, TIER_RANK } from "./model";
+import { type Report, type ReportCheck, type ReportSection, TIER_RANK } from "./model";
 
 // Layered terminal report: a scored header, one block per layer with a pass
 // bar, and a bordered issues grid sorted by estimated score gain. All wrapping
@@ -141,17 +141,17 @@ function meter(passed: number, total: number): string {
 }
 
 // Biggest estimated gain first; equal gains fall back to tier importance.
-function byImpact(a: AuditCheck, b: AuditCheck): number {
+function byImpact(a: ReportCheck, b: ReportCheck): number {
 	const delta = (b.estScoreGain ?? 0) - (a.estScoreGain ?? 0);
 	return delta !== 0 ? delta : TIER_RANK[a.tier] - TIER_RANK[b.tier];
 }
 
-function byTier(a: AuditCheck, b: AuditCheck): number {
+function byTier(a: ReportCheck, b: ReportCheck): number {
 	return TIER_RANK[a.tier] - TIER_RANK[b.tier];
 }
 
 function sectionLines(
-	section: AuditSection,
+	section: ReportSection,
 	term: number,
 	label: number,
 	view: ReportView,
@@ -221,7 +221,7 @@ function sectionLines(
 	return lines;
 }
 
-export function renderAuditReport(report: AuditReport, view: ReportView = {}): string[] {
+export function renderReport(report: Report, view: ReportView = {}): string[] {
 	const term = reportWidth();
 	const label = report.sections.reduce((widest, s) => Math.max(widest, s.name.length), 0);
 

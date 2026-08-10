@@ -8,7 +8,7 @@ export type CheckTier = "required" | "recommended" | "optional";
 
 export const TIER_RANK: Record<CheckTier, number> = { required: 0, recommended: 1, optional: 2 };
 
-export interface AuditCheck {
+export interface ReportCheck {
 	name: string;
 	passed: boolean;
 	skipped?: boolean;
@@ -24,9 +24,9 @@ export interface AuditCheck {
 	estScoreGain?: number;
 }
 
-export interface AuditSection {
+export interface ReportSection {
 	name: string;
-	checks: AuditCheck[];
+	checks: ReportCheck[];
 	/** Passing count among non-skipped checks. */
 	passed: number;
 	/** Non-skipped check count. */
@@ -34,13 +34,13 @@ export interface AuditSection {
 	skipped: number;
 }
 
-export interface AuditReport {
+export interface Report {
 	url: string;
 	score: number;
 	rating: string;
 	/** ora's one-line agentic verdict, when it arrived. */
 	summary?: string;
-	sections: AuditSection[];
+	sections: ReportSection[];
 }
 
 export function ratingFor(score: number): string {
@@ -50,7 +50,7 @@ export function ratingFor(score: number): string {
 	return "Needs Improvement";
 }
 
-export function sectionOf(name: string, checks: AuditCheck[]): AuditSection {
+export function sectionOf(name: string, checks: ReportCheck[]): ReportSection {
 	const counted = checks.filter((c) => !c.skipped);
 	return {
 		name,
@@ -74,13 +74,13 @@ function tierOf(weight: number, heaviest: number): CheckTier {
 	return "optional";
 }
 
-function convertCheck(raw: ScanCheck, heaviest: number): AuditCheck {
+function convertCheck(raw: ScanCheck, heaviest: number): ReportCheck {
 	// pass → passed; na/pending → skipped (kept out of every count);
 	// fail/warning/error all surface as issues (warning just gets a softer glyph).
 	const passed = raw.status === "pass";
 	const skipped = raw.status === "na" || raw.status === "pending";
 
-	const check: AuditCheck = {
+	const check: ReportCheck = {
 		name: raw.name,
 		passed,
 		tier: tierOf(raw.maxScore ?? 0, heaviest),
@@ -95,7 +95,7 @@ function convertCheck(raw: ScanCheck, heaviest: number): AuditCheck {
 	return check;
 }
 
-export function toAuditReport(scan: ScanResult, requestedUrl: string): AuditReport {
+export function toReport(scan: ScanResult, requestedUrl: string): Report {
 	const sections = (scan.layers ?? []).map((layer) => {
 		const heaviest = layer.checks.reduce((top, c) => Math.max(top, c.maxScore ?? 0), 0);
 		return sectionOf(

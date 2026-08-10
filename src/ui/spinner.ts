@@ -1,7 +1,7 @@
 import pc from "picocolors";
 import { SPINNER_FRAMES } from "./ansi";
 
-// Single-line progress indicator on stderr, used while an audit scan streams.
+// Single-line progress indicator on stderr, used while a scan streams.
 // It only animates when stderr is an interactive terminal; in pipes and CI the
 // carriage-return repaint would otherwise show up as one line per tick.
 

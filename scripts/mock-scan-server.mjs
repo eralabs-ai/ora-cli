@@ -3,7 +3,7 @@
 // burning the live rate limit (10 scans/min/IP):
 //
 //   node scripts/mock-scan-server.mjs [port]         # default 8799
-//   ORA_API_URL=http://localhost:8799 node dist/main.cjs audit https://stripe.com
+//   ORA_API_URL=http://localhost:8799 node dist/main.cjs scan https://stripe.com
 //
 // Serves:
 //   GET /api/scan/stream?domain=X  data-only SSE: progress events, scan_complete
@@ -157,6 +157,6 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, () => {
 	console.log(`mock ora scan API on http://localhost:${PORT}`);
 	console.log(
-		`try: ORA_API_URL=http://localhost:${PORT} node dist/main.cjs audit https://stripe.com`,
+		`try: ORA_API_URL=http://localhost:${PORT} node dist/main.cjs scan https://stripe.com`,
 	);
 });
