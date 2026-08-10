@@ -55,7 +55,7 @@ const journey = defineCommand({
 		domain: { type: "string", description: "Site the agent targets (e.g. stripe.com)" },
 		harness: {
 			type: "string",
-			description: "Agent harness: claude-code, codex, aider, …",
+			description: "Agent harness: claude-code, codex, openclaw, hermess, claude-agent, eve, …",
 			default: "claude-code",
 		},
 		model: { type: "string", description: "Model override (harness default when omitted)" },
@@ -99,7 +99,7 @@ function helpScreen(): string {
 		"",
 		`  ${d("journey options:")}`,
 		`    --domain <d>     ${d("Site the agent targets (e.g. stripe.com)")}`,
-		`    --harness <h>    ${d("Agent harness: claude-code, codex, aider, … (default claude-code)")}`,
+		`    --harness <h>    ${d("Agent harness: claude-code (default), codex, openclaw, hermess, claude-agent, eve, …")}`,
 		`    --model <m>      ${d("Model override (harness default when omitted)")}`,
 		`    --json           ${d("Output as JSON")}`,
 		`    ${d("requires ORA_API_KEY (see .env.example)")}`,
