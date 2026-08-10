@@ -6,7 +6,7 @@ import { pause, watchdog } from "./shared";
 // fan-out needing the journeys:write scope; a runs:read + runs:write key is all
 // this client requires, so it stays away from that endpoint on purpose.)
 
-const PLATFORM_BASE = "https://api.staging.agentfront.sh";
+const PLATFORM_BASE = "https://api.agentfront.sh";
 const RUN_IDLE_MS = 120_000; // agents legitimately go quiet between turns
 
 // --- Wire shapes ---

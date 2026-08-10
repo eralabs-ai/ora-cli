@@ -113,7 +113,7 @@ All configuration is environment-first: the consumer defines the variables, the 
 | Var | Used by | Default | Purpose |
 |---|---|---|---|
 | `ORA_API_URL` | scan | `https://ora.ai` | Public scan API base (no auth) |
-| `ORA_PLATFORM_URL` | journey | `https://api.staging.agentfront.sh` | Authenticated platform API base |
+| `ORA_PLATFORM_URL` | journey | `https://api.agentfront.sh` | Authenticated platform API base |
 | `ORA_API_KEY` | journey | — (required) | Secret key (`ora_sk_…`), exchanged for a short-lived bearer token |
 
 ## Exit codes
