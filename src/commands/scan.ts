@@ -7,13 +7,11 @@ import { spinner } from "../ui/spinner";
 export interface ScanCommandInput {
 	url: string;
 	json: boolean;
-	minScore: number | null;
 	showSkipped: boolean;
 	showPassing: boolean;
 }
 
-// Exit codes: 0 scan ok (and above --min-score when given) · 1 under the
-// threshold · 2 anything went wrong.
+// Exit codes: 0 scan ok · 2 anything went wrong.
 export async function scanCommand(input: ScanCommandInput): Promise<number> {
 	const target = input.url.replace(/\/+$/, "");
 	const interactive = !input.json;
@@ -44,9 +42,5 @@ export async function scanCommand(input: ScanCommandInput): Promise<number> {
 		}
 	}
 
-	if (input.minScore !== null && report.score < input.minScore) {
-		if (interactive) console.log(`Score ${report.score} is below minimum ${input.minScore}`);
-		return 1;
-	}
 	return 0;
 }

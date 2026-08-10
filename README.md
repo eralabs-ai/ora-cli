@@ -14,7 +14,7 @@ Two commands:
 ## scan
 
 ```
-ax scan <url> [--json] [--min-score n] [--show-passing] [--show-skipped]
+ax scan <url> [--json] [--show-passing] [--show-skipped]
 ```
 
 ```
@@ -38,7 +38,6 @@ ax scan <url> [--json] [--min-score n] [--show-passing] [--show-skipped]
 | Flag | Effect |
 |---|---|
 | `--json` | Full machine-readable result on stdout (every check, all layers), nothing else |
-| `--min-score <n>` | Exit `1` if the score is below `n` (for CI gates) |
 | `--show-passing` | List every passing check, not just the per-layer summary bar |
 | `--show-skipped` | Include not-applicable/pending checks with their reason |
 
@@ -121,9 +120,9 @@ All configuration is environment-first: the consumer defines the variables, the 
 
 | Code | Meaning |
 |---|---|
-| `0` | scan: ok (and ≥ `--min-score` if set) · journey: run outcome `success` |
-| `1` | scan: score below `--min-score` · journey: run finished with a non-success outcome |
-| `2` | any error (bad flag value, API failure, timeout) |
+| `0` | scan: completed · journey: run outcome `success` |
+| `1` | journey: run finished with a non-success outcome |
+| `2` | any error (API failure, timeout) |
 
 ## Development
 

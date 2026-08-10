@@ -18,7 +18,6 @@ const scan = defineCommand({
 			required: true,
 		},
 		json: { type: "boolean", description: "Output as JSON", default: false },
-		"min-score": { type: "string", description: "Exit 1 when the score is under n" },
 		"show-passing": {
 			type: "boolean",
 			description: "List each passing check individually",
@@ -31,20 +30,10 @@ const scan = defineCommand({
 		},
 	},
 	async run({ args }) {
-		let minScore: number | null = null;
-		if (args["min-score"] !== undefined) {
-			const parsed = Number(args["min-score"]);
-			if (!Number.isFinite(parsed)) {
-				console.error(`Invalid --min-score: ${args["min-score"]}`);
-				process.exit(2);
-			}
-			minScore = parsed;
-		}
 		process.exit(
 			await scanCommand({
 				url: args.url as string,
 				json: Boolean(args.json),
-				minScore,
 				showSkipped: Boolean(args["show-skipped"]),
 				showPassing: Boolean(args["show-passing"]),
 			}),
@@ -99,13 +88,12 @@ function helpScreen(): string {
 		"",
 		`  ${d("Examples:")}`,
 		`    ${g} ${NAME} scan https://docs.example.com`,
-		`    ${g} ${NAME} scan https://docs.example.com --min-score 70`,
+		`    ${g} ${NAME} scan https://docs.example.com --json`,
 		`    ${g} ${NAME} journey "Find the API docs and how to authenticate" --domain stripe.com`,
 		`    ${g} ${NAME} journey "Sign up for an account" --domain example.com --harness codex`,
 		"",
 		`  ${d("scan options:")}`,
 		`    --json           ${d("Output as JSON")}`,
-		`    --min-score <n>  ${d("Exit 1 when the score is under n")}`,
 		`    --show-passing   ${d("List each passing check (hidden by default)")}`,
 		`    --show-skipped   ${d("List skipped checks (hidden by default)")}`,
 		"",
