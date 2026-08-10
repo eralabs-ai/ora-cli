@@ -12,6 +12,11 @@
 		"indentStyle": "tab",
 		"lineWidth": 100
 	},
+	"json": {
+		"formatter": {
+			"expand": "auto"
+		}
+	},
 	"files": {
 		"includes": ["**", "!**/dist", "!**/node_modules", "!**/coverage", "!**/.context"]
 	}
