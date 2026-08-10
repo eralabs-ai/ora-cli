@@ -85,7 +85,7 @@ Edges come from ora's own per-step attribution (link-follows nest under the page
 | Flag | Effect |
 |---|---|
 | `--domain <d>` | Site the agent targets (e.g. `stripe.com`) |
-| `--harness <h>` | Agent harness: `claude-code` (default), `codex`, `aider`, `openai-web`, `claude-web`, `tavily` |
+| `--harness <h>` | Agent harness: `claude-code` (default), `codex`, `aider`, `openai-web`, `claude-web` |
 | `--model <m>` | Model override (e.g. `claude-haiku-4-5-20251001` — cheap and good for demos) |
 | `--json` | Full result as JSON: run metadata, usage, insight, and the raw trajectory |
 
