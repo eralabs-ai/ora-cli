@@ -110,6 +110,8 @@ node --env-file=.env dist/main.cjs journey "Find the pricing page" --domain exam
 
 All configuration is environment-first: the consumer defines the variables, the CLI only reads them.
 
+A `.env` in the working directory is read on startup — copy `.env.example` and fill it in. Anything already exported wins over the file, so a key set for your shell or by CI beats a stale `.env`.
+
 | Var | Used by | Default | Purpose |
 |---|---|---|---|
 | `ORA_API_URL` | scan | `https://ora.ai` | Public scan API base (no auth) |

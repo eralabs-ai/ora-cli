@@ -3,6 +3,7 @@ import pc from "picocolors";
 import pkg from "../package.json";
 import { journeyCommand } from "./commands/journey";
 import { scanCommand } from "./commands/scan";
+import { loadLocalEnv } from "./env";
 
 const NAME = "ax";
 
@@ -124,5 +125,9 @@ const root = defineCommand({
 		}
 	},
 });
+
+// Before anything reads process.env — every command resolves its configuration
+// at call time, so the file has to be in place first.
+loadLocalEnv();
 
 runMain(root);
