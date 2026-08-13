@@ -1,9 +1,15 @@
+import type { AuditScanResult, AuditScoreResult } from "../contract";
+import { warnOnNewerContract } from "../contract";
 import { errorBodyText, pause, watchdog } from "./shared";
 
-// Client for ora's public agent-readiness scan. Uses the SSE endpoint
-// (GET /api/scan/stream) rather than POST /api/scan: the synchronous variant
-// has a ~30s hard cap and reliably times out on large or uncached sites,
-// whereas the stream just keeps emitting while the scan works.
+// Client for ora's public agent-readiness audit. Uses the SSE endpoint
+// (GET /api/scan/stream?format=audit) rather than POST /api/scan: the
+// synchronous variant has a ~30s hard cap and reliably times out on large or
+// uncached sites, whereas the stream just keeps emitting while the scan works.
+//
+// Thin client by design: every payload field (grade, tiers, topFixes ranking,
+// estScoreGain) comes from the versioned audit contract as-is. Nothing here
+// re-derives interpretation - see src/contract/ for the generated types.
 
 const PUBLIC_BASE = "https://ora.ai";
 const STREAM_IDLE_MS = 60_000;
@@ -11,50 +17,26 @@ const POLL_EVERY_MS = 2_000;
 const POLL_LIMIT = 45; // ≈90s of patience for async deep analysis
 const BAR_CELLS = 14;
 
-export type ScanCheckStatus = "pass" | "fail" | "warning" | "error" | "pending" | "na";
+/** Any failure to obtain a result from ora: network, HTTP, rate limit, timeout. */
+export class AuditApiError extends Error {}
 
-export interface ScanCheck {
-	id: string;
-	name: string;
-	/** What the check inspects — not the remedy. */
-	description?: string;
-	status: ScanCheckStatus;
-	score: number;
-	maxScore: number;
-	/** The observed finding. */
-	details?: string;
-	/** The remedy to apply. Absent from ora's OpenAPI spec, present in responses. */
-	recommendation?: string;
-	/** Estimated points recovered by fixing this check. */
-	estScoreGain?: number;
+/**
+ * The raw audit payload: scan-shaped from the stream's terminal event,
+ * score-shaped once deep-analysis polling has taken over.
+ */
+export type AuditResult = AuditScanResult | AuditScoreResult;
+
+export interface AuditOutcome {
+	/** The raw `?format=audit` contract payload, untouched. */
+	result: AuditResult;
+	/**
+	 * ora's one-line agentic verdict. Rides the stream's `summary_ready` event,
+	 * not the audit payload, so it is carried alongside rather than injected.
+	 */
+	verdict?: string;
 }
 
-export interface ScanLayer {
-	id: string;
-	name: string;
-	description?: string;
-	checks: ScanCheck[];
-	score: number;
-	maxScore: number;
-}
-
-export interface ScanResult {
-	domain?: string;
-	url?: string;
-	finalUrl?: string;
-	score: number;
-	maxScore?: number;
-	grade?: string;
-	analysisStatus?: "complete" | "partial" | "stuck";
-	pendingChecks?: string[];
-	layers?: ScanLayer[];
-	agenticSummary?: string;
-	urlKind?: string;
-	scannedAt?: string;
-	durationMs?: number;
-}
-
-export interface ScanOptions {
+export interface AuditOptions {
 	/** Receives one-line progress updates while the scan streams and polls. */
 	progress?: (line: string) => void;
 	/** Base URL override; otherwise $ORA_API_URL, otherwise https://ora.ai. */
@@ -63,40 +45,62 @@ export interface ScanOptions {
 	idleMs?: number;
 	pollEveryMs?: number;
 	pollLimit?: number;
+	/** Freshness window in seconds (server clamps to [3600, 86400]). */
+	maxAgeSeconds?: number;
+	/** Bypass the freshness cache (spends the stricter 6/day force budget). */
+	force?: boolean;
+	/** Store the result as disposable (tunnel hosts are auto-classified). */
+	ephemeral?: boolean;
 }
 
 /**
- * Scan `target` and resolve with ora's full ScanResult. When the stream ends
- * with analysis still marked partial, keeps polling GET /api/score/{domain}
- * until it settles (complete or stuck) or the poll budget runs out.
+ * Audit `target` and resolve with ora's raw audit payload. When the stream
+ * ends with analysis still marked partial, keeps polling
+ * GET /api/score/{domain}?format=audit until it settles (complete or stuck)
+ * or the poll budget runs out.
  */
-export async function performScan(target: string, options: ScanOptions = {}): Promise<ScanResult> {
+export async function performAudit(
+	target: string,
+	options: AuditOptions = {},
+): Promise<AuditOutcome> {
 	const base = (options.baseUrl ?? process.env.ORA_API_URL ?? PUBLIC_BASE).replace(/\/+$/, "");
-	options.progress?.(`Scanning ${target} with ora`);
+	options.progress?.(`Auditing ${target} with ora`);
 
-	let scan = await consumeScanStream(base, target, options);
-	if (stillAnalyzing(scan)) scan = await awaitDeepAnalysis(base, scan, options);
-	return scan;
+	const streamed = await consumeScanStream(base, target, options);
+	warnOnNewerContract(streamed.result.contractVersion);
+
+	let result: AuditResult = streamed.result;
+	if (stillAnalyzing(result)) result = await awaitDeepAnalysis(base, result, options);
+	return { result, verdict: streamed.verdict };
+}
+
+function streamUrl(base: string, target: string, options: AuditOptions): string {
+	const params = new URLSearchParams({ domain: target, format: "audit" });
+	if (options.force) params.set("force", "1");
+	if (options.ephemeral) params.set("ephemeral", "1");
+	if (options.maxAgeSeconds !== undefined)
+		params.set("maxAgeSeconds", String(options.maxAgeSeconds));
+	return `${base}/api/scan/stream?${params}`;
 }
 
 // The stream is data-only SSE: `data: {json}` blocks separated by blank lines,
 // no `event:` names. Every payload carries a `type` discriminator. Two of them
-// matter beyond progress: `scan_complete` (ScanResult nested under `result`)
-// and `summary_ready` (the one-line agentic verdict, generated after scoring —
-// stopping at scan_complete would silently drop it).
+// matter beyond progress: `scan_complete` (the audit payload nested under
+// `result`) and `summary_ready` (the one-line agentic verdict, generated after
+// scoring - stopping at scan_complete would silently drop it).
 async function consumeScanStream(
 	base: string,
 	target: string,
-	options: ScanOptions,
-): Promise<ScanResult> {
+	options: AuditOptions,
+): Promise<AuditOutcome & { result: AuditScanResult }> {
 	const idleMs = options.idleMs ?? STREAM_IDLE_MS;
 	const dog = watchdog(idleMs);
 	const timeoutError = () =>
-		new Error(`ora scan timed out — no progress for ${Math.round(idleMs / 1000)}s`);
+		new AuditApiError(`ora audit timed out — no progress for ${Math.round(idleMs / 1000)}s`);
 
 	let res: Response;
 	try {
-		res = await fetch(`${base}/api/scan/stream?domain=${encodeURIComponent(target)}`, {
+		res = await fetch(streamUrl(base, target, options), {
 			headers: { accept: "text/event-stream" },
 			signal: dog.signal,
 		});
@@ -104,25 +108,25 @@ async function consumeScanStream(
 		dog.disarm();
 		if (dog.tripped()) throw timeoutError();
 		const detail = cause instanceof Error ? cause.message : String(cause);
-		throw new Error(`ora scan request failed: ${detail}`);
+		throw new AuditApiError(`ora audit request failed: ${detail}`);
 	}
 
 	if (res.status === 429) {
 		dog.disarm();
 		const wait = res.headers.get("retry-after");
-		throw new Error(
-			`ora rate limit exceeded (10 scans/min per IP)${wait ? ` — retry after ${wait}s` : ""}`,
+		throw new AuditApiError(
+			`ora rate limit exceeded${wait ? ` — retry after ${wait}s` : ""} (burst: 10 scans/min/IP; daily: 30 scans + 6 force per 24h)`,
 		);
 	}
 	if (!res.ok || !res.body) {
 		dog.disarm();
-		throw new Error(`ora scan failed: ${await errorBodyText(res)}`);
+		throw new AuditApiError(`ora audit failed: ${await errorBodyText(res)}`);
 	}
 
 	const narrate = progressNarrator();
 	const utf8 = new TextDecoder();
 	let pending = "";
-	let scan: ScanResult | undefined;
+	let result: AuditScanResult | undefined;
 	let verdict: string | undefined;
 
 	try {
@@ -147,27 +151,26 @@ async function consumeScanStream(
 				const line = narrate(event);
 				if (line) options.progress?.(line);
 				if (event.type === "scan_complete" && event.result) {
-					scan = event.result as ScanResult;
+					result = event.result as AuditScanResult;
 				} else if (event.type === "summary_ready" && typeof event.agenticSummary === "string") {
 					verdict = event.agenticSummary;
 				}
 				// Bail as soon as both pieces are in hand; otherwise drain to the end
 				// (the server closes shortly after, with or without a summary).
-				if (scan && verdict) break streaming;
+				if (result && verdict) break streaming;
 			}
 		}
 	} catch (cause) {
 		if (dog.tripped()) throw timeoutError();
 		const detail = cause instanceof Error ? cause.message : String(cause);
-		throw new Error(`ora scan stream error: ${detail}`);
+		throw new AuditApiError(`ora audit stream error: ${detail}`);
 	} finally {
 		dog.disarm();
 		res.body.cancel().catch(() => {});
 	}
 
-	if (!scan) throw new Error("ora scan stream ended before completing");
-	if (verdict && !scan.agenticSummary) scan.agenticSummary = verdict;
-	return scan;
+	if (!result) throw new AuditApiError("ora audit stream ended before completing");
+	return { result, verdict };
 }
 
 // Concatenate the data: lines of one SSE block, dropping one optional leading
@@ -217,21 +220,18 @@ function progressNarrator(): (event: Record<string, unknown>) => string | undefi
 	};
 }
 
-function stillAnalyzing(scan: ScanResult): boolean {
-	if (scan.analysisStatus === "complete" || scan.analysisStatus === "stuck") return false;
-	if (scan.analysisStatus === "partial") return true;
-	return (scan.pendingChecks?.length ?? 0) > 0;
+function stillAnalyzing(result: AuditResult): boolean {
+	if (result.analysisStatus === "complete" || result.analysisStatus === "stuck") return false;
+	if (result.analysisStatus === "partial") return true;
+	return (result.pendingChecks?.length ?? 0) > 0;
 }
 
 async function awaitDeepAnalysis(
 	base: string,
-	first: ScanResult,
-	options: ScanOptions,
-): Promise<ScanResult> {
-	const host = first.domain ?? hostOf(first.url);
-	if (!host) return first;
-
-	const scoreUrl = `${base}/api/score/${encodeURIComponent(host)}`;
+	first: AuditResult,
+	options: AuditOptions,
+): Promise<AuditResult> {
+	const scoreUrl = `${base}/api/score/${encodeURIComponent(first.domain)}?format=audit`;
 	const every = options.pollEveryMs ?? POLL_EVERY_MS;
 	const limit = options.pollLimit ?? POLL_LIMIT;
 	let latest = first;
@@ -247,19 +247,10 @@ async function awaitDeepAnalysis(
 				headers: { accept: "application/json" },
 				signal: AbortSignal.timeout(15_000),
 			});
-			if (res.ok) latest = (await res.json()) as ScanResult;
+			if (res.ok) latest = (await res.json()) as AuditScoreResult;
 		} catch {
 			// transient hiccup — keep polling until the round budget is spent
 		}
 	}
 	return latest;
-}
-
-function hostOf(url?: string): string | undefined {
-	if (!url) return undefined;
-	try {
-		return new URL(url).hostname;
-	} catch {
-		return undefined;
-	}
 }

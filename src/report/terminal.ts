@@ -1,16 +1,19 @@
 import pc from "picocolors";
-import { type Report, type ReportCheck, type ReportSection, TIER_RANK } from "./model";
+import type { Report, ReportSection } from "./model";
 
 // Layered terminal report: a scored header, one block per layer with a pass
-// bar, and a bordered issues grid sorted by estimated score gain. All wrapping
-// happens on plain text; styling is applied to whole cell lines afterwards so
-// escape codes never enter the width arithmetic.
+// bar, a bordered issues grid, and the payload's server-ranked Top fixes list
+// rendered verbatim (thin client: ora owns the ranking). All wrapping happens
+// on plain text; styling is applied to whole cell lines afterwards so escape
+// codes never enter the width arithmetic.
 
 export interface ReportView {
 	/** Also list not-applicable / pending checks. */
 	showSkipped?: boolean;
 	/** Also list each passing check (the layer bar is the default signal). */
 	showPassing?: boolean;
+	/** The audit ran against a tunnel to a local target (scoped banner). */
+	tunnel?: boolean;
 }
 
 type Paint = (s: string) => string;
@@ -140,16 +143,6 @@ function meter(passed: number, total: number): string {
 	return pc.green("█".repeat(lit)) + pc.dim("░".repeat(BAR_CELLS - lit));
 }
 
-// Biggest estimated gain first; equal gains fall back to tier importance.
-function byImpact(a: ReportCheck, b: ReportCheck): number {
-	const delta = (b.estScoreGain ?? 0) - (a.estScoreGain ?? 0);
-	return delta !== 0 ? delta : TIER_RANK[a.tier] - TIER_RANK[b.tier];
-}
-
-function byTier(a: ReportCheck, b: ReportCheck): number {
-	return TIER_RANK[a.tier] - TIER_RANK[b.tier];
-}
-
 function sectionLines(
 	section: ReportSection,
 	term: number,
@@ -165,11 +158,11 @@ function sectionLines(
 		`  ${pc.bold(padTo(section.name, label))}  ${meter(section.passed, section.total)} ${pc.dim(tally + skipTail)}`,
 	);
 
-	const issues = section.checks.filter((c) => !c.passed && !c.skipped).sort(byImpact);
+	// Payload order throughout: ora already orders checks, and the ranked view
+	// is the Top fixes list - re-sorting here would re-derive interpretation.
+	const issues = section.checks.filter((c) => !c.passed && !c.skipped);
 	if (issues.length) {
-		const gain = issues.reduce((sum, c) => sum + (c.estScoreGain ?? 0), 0);
-		const upside = gain >= 0.5 ? ` · +${Math.round(gain)} pts` : "";
-		lines.push(`    ${pc.red("✗")} ${pc.bold(`Issues (${issues.length}${upside})`)}`);
+		lines.push(`    ${pc.red("✗")} ${pc.bold(`Issues (${issues.length})`)}`);
 		const grid = tableLines(
 			issueCols(
 				term,
@@ -183,10 +176,14 @@ function sectionLines(
 			]),
 		);
 		lines.push(...grid.map((row) => `    ${row}`));
+		const specs = issues.filter((c) => c.specUrl);
+		for (const c of specs) {
+			lines.push(pc.dim(`      ↳ ${c.id} spec: ${c.specUrl}`));
+		}
 	}
 
 	if (view.showPassing) {
-		const passing = section.checks.filter((c) => c.passed && !c.skipped).sort(byTier);
+		const passing = section.checks.filter((c) => c.passed && !c.skipped);
 		if (passing.length) {
 			lines.push(`    ${pc.green("✓")} ${pc.bold(`Passed (${passing.length})`)}`);
 			const grid = tableLines(
@@ -221,6 +218,28 @@ function sectionLines(
 	return lines;
 }
 
+// The payload's server-ranked fix list, order untouched. `≈` on every figure:
+// estScoreGain is an estimate, and some fixes (bonus surfaces on an empty
+// layer) have no estimable uplift at all.
+function topFixLines(report: Report): string[] {
+	if (!report.topFixes.length) return [];
+	const lines = ["", `  ${pc.bold("Top fixes")} ${pc.dim("(ranked by ora)")}`];
+	const idWidth = report.topFixes.reduce((w, f) => Math.max(w, f.id.length), 0);
+	report.topFixes.forEach((fix, i) => {
+		const gain =
+			typeof fix.estScoreGain === "number" ? pc.green(`≈ +${fix.estScoreGain} pts`) : pc.dim("—");
+		const bonus = fix.bonus ? pc.dim(" (bonus)") : "";
+		lines.push(`  ${i + 1}. ${pc.bold(padTo(fix.id, idWidth))}  ${gain}${bonus}`);
+	});
+	return lines;
+}
+
+function cacheAge(seconds: number): string {
+	if (seconds < 90) return `${seconds}s`;
+	if (seconds < 5400) return `${Math.round(seconds / 60)} min`;
+	return `${Math.round(seconds / 3600)}h`;
+}
+
 export function renderReport(report: Report, view: ReportView = {}): string[] {
 	const term = reportWidth();
 	const label = report.sections.reduce((widest, s) => Math.max(widest, s.name.length), 0);
@@ -228,8 +247,22 @@ export function renderReport(report: Report, view: ReportView = {}): string[] {
 	const lines: string[] = [""];
 	const scorePaint = report.score >= 70 ? pc.green : report.score >= 50 ? pc.yellow : pc.red;
 	lines.push(
-		`  ${pc.bold(report.url)}  ${scorePaint(pc.bold(`${report.score}/100`))} ${pc.dim(report.rating)}`,
+		`  ${pc.bold(report.target)}  ${scorePaint(pc.bold(`${report.score}/100 ${report.grade}`))}`,
 	);
+	if (view.tunnel) {
+		lines.push(
+			pc.dim(
+				"  tunnel audit — disposable result, excluded from rankings; off-site checks (registry listings, brand search) usually fail for a throwaway hostname",
+			),
+		);
+	}
+	if (report.mcpAuthRequired) {
+		lines.push(
+			pc.yellow(
+				"  ⚠ MCP handshake requires credentials — target is unscored (0/F means could not evaluate, not failed everything)",
+			),
+		);
+	}
 	if (report.summary) {
 		for (const row of hardWrap(report.summary, term - 4)) lines.push(`  ${pc.dim(row)}`);
 	}
@@ -237,6 +270,8 @@ export function renderReport(report: Report, view: ReportView = {}): string[] {
 	for (const section of report.sections) {
 		lines.push(...sectionLines(section, term, label, view));
 	}
+
+	lines.push(...topFixLines(report));
 
 	// Remind about whatever the default view left out.
 	const passing = report.sections.reduce((n, s) => n + s.passed, 0);
@@ -250,6 +285,17 @@ export function renderReport(report: Report, view: ReportView = {}): string[] {
 			`  ${skipped} check${skipped === 1 ? "" : "s"} skipped — run with --show-skipped to see them`,
 		);
 	}
+	if (report.analysisStatus === "partial") {
+		reminders.push("  Analysis still finishing — re-run shortly for the final score");
+	} else if (report.analysisStatus === "stuck") {
+		reminders.push("  Scan did not fully resolve — re-run with --force to complete it");
+	}
+	if (typeof report.cacheAgeSeconds === "number") {
+		reminders.push(
+			`  cached result (${cacheAge(report.cacheAgeSeconds)} old) · pass --force for a fresh scan`,
+		);
+	}
+	if (report.reportUrl) reminders.push(`  Full report: ${report.reportUrl}`);
 	if (reminders.length) {
 		lines.push("");
 		for (const reminder of reminders) lines.push(pc.dim(reminder));
