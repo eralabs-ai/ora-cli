@@ -1,6 +1,7 @@
 import { AuditApiError, type AuditOutcome, performAudit } from "../api/audit";
 import { toReport } from "../report/model";
 import { renderReport } from "../report/terminal";
+import { isLocalTarget, openTunnel, type Tunnel, TunnelError } from "../tunnel";
 import { spinner } from "../ui/spinner";
 
 export interface AuditCommandInput {
@@ -13,6 +14,8 @@ export interface AuditCommandInput {
 	/** Raw --max-age value in seconds. */
 	maxAge?: string;
 	force: boolean;
+	/** Tunnel the target through cloudflared (implied for local targets). */
+	tunnel?: boolean;
 }
 
 /**
@@ -71,17 +74,44 @@ export async function auditCommand(input: AuditCommandInput): Promise<number> {
 	const interactive = !input.json;
 	if (interactive) spinner.start(`Auditing ${target} with ora`);
 
+	// A local target only exists on this machine, so ora can never reach it
+	// directly - tunnel it (also on explicit --tunnel) and store the result as
+	// ephemeral so the throwaway hostname never pollutes rankings.
+	const useTunnel = Boolean(input.tunnel) || isLocalTarget(target);
+	let tunnel: Tunnel | undefined;
+	const closeTunnel = () => tunnel?.close();
+	let auditTarget = target;
+	if (useTunnel) {
+		if (interactive) spinner.update(`Opening a cloudflared tunnel to ${target}`);
+		try {
+			tunnel = await openTunnel(target);
+		} catch (cause) {
+			spinner.stop();
+			console.error(cause instanceof Error ? cause.message : String(cause));
+			return EXIT.USAGE;
+		}
+		// The tunnel must not outlive an interrupted run.
+		process.on("SIGINT", closeTunnel);
+		process.on("SIGTERM", closeTunnel);
+		auditTarget = tunnel.url;
+	}
+
 	let outcome: AuditOutcome;
 	try {
-		outcome = await performAudit(target, {
+		outcome = await performAudit(auditTarget, {
 			progress: interactive ? (line) => spinner.update(line) : undefined,
 			maxAgeSeconds: maxAge.value,
 			force: input.force,
+			ephemeral: useTunnel || undefined,
 		});
 	} catch (cause) {
 		spinner.stop();
 		console.error(`Audit failed: ${cause instanceof Error ? cause.message : String(cause)}`);
 		return cause instanceof AuditApiError ? EXIT.API : EXIT.USAGE;
+	} finally {
+		closeTunnel();
+		process.removeListener("SIGINT", closeTunnel);
+		process.removeListener("SIGTERM", closeTunnel);
 	}
 	spinner.stop();
 
@@ -93,6 +123,7 @@ export async function auditCommand(input: AuditCommandInput): Promise<number> {
 		for (const line of renderReport(toReport(outcome, target), {
 			showSkipped: input.showSkipped,
 			showPassing: input.showPassing,
+			tunnel: useTunnel,
 		})) {
 			console.log(line);
 		}

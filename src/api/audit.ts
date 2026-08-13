@@ -150,6 +150,13 @@ async function consumeScanStream(
 				}
 				const line = narrate(event);
 				if (line) options.progress?.(line);
+				if (event.type === "error") {
+					// The server closes right after this frame; without surfacing it
+					// the caller would only see "ended before completing".
+					throw new AuditApiError(
+						`ora audit failed: ${typeof event.message === "string" ? event.message : "scan error"}`,
+					);
+				}
 				if (event.type === "scan_complete" && event.result) {
 					result = event.result as AuditScanResult;
 				} else if (event.type === "summary_ready" && typeof event.agenticSummary === "string") {
@@ -162,6 +169,7 @@ async function consumeScanStream(
 		}
 	} catch (cause) {
 		if (dog.tripped()) throw timeoutError();
+		if (cause instanceof AuditApiError) throw cause;
 		const detail = cause instanceof Error ? cause.message : String(cause);
 		throw new AuditApiError(`ora audit stream error: ${detail}`);
 	} finally {

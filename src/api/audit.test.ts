@@ -131,6 +131,19 @@ describe("performAudit", () => {
 		expect(lines.at(-1)).toBe("Finishing up…");
 	});
 
+	it("surfaces the server's error frame instead of a generic early-end", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () =>
+				scanStream([
+					{ type: "kind_detecting" },
+					{ type: "error", message: "Domain is not reachable" },
+				]),
+			),
+		);
+		await expect(performAudit("example.com")).rejects.toThrow(/Domain is not reachable/);
+	});
+
 	it("rejects when the stream closes without scan_complete", async () => {
 		vi.stubGlobal(
 			"fetch",

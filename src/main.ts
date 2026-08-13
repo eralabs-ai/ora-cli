@@ -3,6 +3,7 @@ import pc from "picocolors";
 import pkg from "../package.json";
 import { auditCommand } from "./commands/audit";
 import { journeyCommand } from "./commands/journey";
+import { skillCommand } from "./commands/skill";
 import { loadLocalEnv } from "./env";
 
 const NAME = "ax";
@@ -37,6 +38,12 @@ const audit = defineCommand({
 			description: "Bypass the cache and rescan (spends the stricter 6/day force budget)",
 			default: false,
 		},
+		tunnel: {
+			type: "boolean",
+			description:
+				"Audit through a cloudflared quick tunnel (implied for localhost / *.local targets; requires cloudflared preinstalled)",
+			default: false,
+		},
 		"show-passing": {
 			type: "boolean",
 			description: "List each passing check individually",
@@ -60,6 +67,7 @@ const audit = defineCommand({
 			minScore: args["min-score"] as string | undefined,
 			maxAge: args["max-age"] as string | undefined,
 			force: Boolean(args.force),
+			tunnel: Boolean(args.tunnel),
 		});
 	},
 });
@@ -96,6 +104,39 @@ const journey = defineCommand({
 	},
 });
 
+const skill = defineCommand({
+	meta: {
+		name: "skill",
+		description:
+			"List, print, or install ora's agent skills (digest-verified from the registry, never bundled)",
+	},
+	args: {
+		name: {
+			type: "positional",
+			description: "Skill name (omit to list the registry)",
+			required: false,
+		},
+		install: {
+			type: "boolean",
+			description: "Write <dir>/<name>/SKILL.md instead of printing",
+			default: false,
+		},
+		dir: {
+			type: "string",
+			description: "Install directory (default .claude/skills)",
+		},
+		json: { type: "boolean", description: "Print the raw registry index as JSON", default: false },
+	},
+	async run({ args }) {
+		process.exitCode = await skillCommand({
+			name: args.name as string | undefined,
+			install: Boolean(args.install),
+			dir: args.dir as string | undefined,
+			json: Boolean(args.json),
+		});
+	},
+});
+
 function helpScreen(): string {
 	const g = pc.green("$");
 	const d = pc.dim;
@@ -107,6 +148,7 @@ function helpScreen(): string {
 		`  ${d("Commands:")}`,
 		`    audit ${d("<url>")}       ${d("Score a site's agent readiness")}`,
 		`    journey ${d("<intent>")}  ${d("Send a real agent at a site and watch it live")}`,
+		`    skill ${d("[name]")}      ${d("List, print, or install ora's agent skills")}`,
 		"",
 		`  ${d("Examples:")}`,
 		`    ${g} ${NAME} audit https://docs.example.com`,
@@ -118,6 +160,7 @@ function helpScreen(): string {
 		`    --min-score <n>  ${d("Exit 1 when the score is below n (0-100); the CI gate")}`,
 		`    --max-age <s>    ${d("Accept a cached result up to s seconds old (default 6h)")}`,
 		`    --force          ${d("Bypass the cache and rescan (6/day budget)")}`,
+		`    --tunnel         ${d("Audit localhost via a cloudflared quick tunnel (auto for local targets)")}`,
 		`    --json           ${d("Print the raw ora audit payload as JSON")}`,
 		`    --show-passing   ${d("List each passing check (hidden by default)")}`,
 		`    --show-skipped   ${d("List skipped checks (hidden by default)")}`,
@@ -141,7 +184,7 @@ const root = defineCommand({
 		version: pkg.version,
 		description: "Score any site's agent readiness — and watch real AI agents navigate it",
 	},
-	subCommands: { audit, journey },
+	subCommands: { audit, journey, skill },
 	setup() {
 		// Bare invocation and top-level --help get the curated screen; subcommand
 		// --help stays with citty's generated usage.
