@@ -18,6 +18,13 @@
 		}
 	},
 	"files": {
-		"includes": ["**", "!**/dist", "!**/node_modules", "!**/coverage", "!**/.context"]
+		"includes": [
+			"**",
+			"!**/dist",
+			"!**/node_modules",
+			"!**/coverage",
+			"!**/.context",
+			"!src/contract/types.gen.ts"
+		]
 	}
 }

@@ -1,24 +1,48 @@
 import { defineCommand, runMain } from "citty";
 import pc from "picocolors";
 import pkg from "../package.json";
+import { auditCommand } from "./commands/audit";
 import { journeyCommand } from "./commands/journey";
-import { scanCommand } from "./commands/scan";
+import { skillCommand } from "./commands/skill";
 import { loadLocalEnv } from "./env";
 
 const NAME = "ax";
 
-const scan = defineCommand({
+const audit = defineCommand({
 	meta: {
-		name: "scan",
-		description: "Score a site's agent readiness",
+		name: "audit",
+		description:
+			"Score a site's agent readiness (exit codes: 0 ok, 1 below --min-score, 2 usage, 3 API error)",
 	},
 	args: {
 		url: {
 			type: "positional",
-			description: "URL to scan (e.g. https://docs.example.com)",
+			description: "URL or domain to audit (e.g. https://docs.example.com)",
 			required: true,
 		},
-		json: { type: "boolean", description: "Output as JSON", default: false },
+		json: {
+			type: "boolean",
+			description: "Print the raw ora audit payload as JSON",
+			default: false,
+		},
+		"min-score": {
+			type: "string",
+			description: "Exit 1 when the score is below this threshold (0-100); the CI gate",
+		},
+		"max-age": {
+			type: "string",
+			description: "Accept a cached result up to this many seconds old (server default 6h)",
+		},
+		force: {
+			type: "boolean",
+			description: "Bypass the cache and rescan (spends the stricter 6/day force budget)",
+			default: false,
+		},
+		"tunnel-cmd": {
+			type: "string",
+			description:
+				"Command that exposes a local target and prints its public https URL (e.g. 'ngrok http 3000 --log stdout'); also read from ORA_TUNNEL_CMD. The result is stored as ephemeral",
+		},
 		"show-passing": {
 			type: "boolean",
 			description: "List each passing check individually",
@@ -31,14 +55,19 @@ const scan = defineCommand({
 		},
 	},
 	async run({ args }) {
-		process.exit(
-			await scanCommand({
-				url: args.url as string,
-				json: Boolean(args.json),
-				showSkipped: Boolean(args["show-skipped"]),
-				showPassing: Boolean(args["show-passing"]),
-			}),
-		);
+		// exitCode, not process.exit(): a large --json payload can exceed the
+		// 64KB pipe buffer, and process.exit() drops whatever stdout has not
+		// flushed yet. Setting exitCode lets Node drain stdout, then exit.
+		process.exitCode = await auditCommand({
+			url: args.url as string,
+			json: Boolean(args.json),
+			showSkipped: Boolean(args["show-skipped"]),
+			showPassing: Boolean(args["show-passing"]),
+			minScore: args["min-score"] as string | undefined,
+			maxAge: args["max-age"] as string | undefined,
+			force: Boolean(args.force),
+			tunnelCmd: args["tunnel-cmd"] as string | undefined,
+		});
 	},
 });
 
@@ -63,15 +92,47 @@ const journey = defineCommand({
 		json: { type: "boolean", description: "Output as JSON", default: false },
 	},
 	async run({ args }) {
-		process.exit(
-			await journeyCommand({
-				intent: args.intent as string,
-				domain: args.domain as string | undefined,
-				harness: args.harness as string,
-				model: args.model as string | undefined,
-				json: Boolean(args.json),
-			}),
-		);
+		// Same exitCode-over-exit rule as audit: let stdout drain before exiting.
+		process.exitCode = await journeyCommand({
+			intent: args.intent as string,
+			domain: args.domain as string | undefined,
+			harness: args.harness as string,
+			model: args.model as string | undefined,
+			json: Boolean(args.json),
+		});
+	},
+});
+
+const skill = defineCommand({
+	meta: {
+		name: "skill",
+		description:
+			"List, print, or install ora's agent skills (digest-verified from the registry, never bundled)",
+	},
+	args: {
+		name: {
+			type: "positional",
+			description: "Skill name (omit to list the registry)",
+			required: false,
+		},
+		install: {
+			type: "boolean",
+			description: "Write <dir>/<name>/SKILL.md instead of printing",
+			default: false,
+		},
+		dir: {
+			type: "string",
+			description: "Install directory (default .claude/skills)",
+		},
+		json: { type: "boolean", description: "Print the raw registry index as JSON", default: false },
+	},
+	async run({ args }) {
+		process.exitCode = await skillCommand({
+			name: args.name as string | undefined,
+			install: Boolean(args.install),
+			dir: args.dir as string | undefined,
+			json: Boolean(args.json),
+		});
 	},
 });
 
@@ -84,19 +145,27 @@ function helpScreen(): string {
 		`  ${d("Score any site's agent readiness — and watch real AI agents navigate it")}`,
 		"",
 		`  ${d("Commands:")}`,
-		`    scan ${d("<url>")}        ${d("Score a site's agent readiness")}`,
+		`    audit ${d("<url>")}       ${d("Score a site's agent readiness")}`,
 		`    journey ${d("<intent>")}  ${d("Send a real agent at a site and watch it live")}`,
+		`    skill ${d("[name]")}      ${d("List, print, or install ora's agent skills")}`,
 		"",
 		`  ${d("Examples:")}`,
-		`    ${g} ${NAME} scan https://docs.example.com`,
-		`    ${g} ${NAME} scan https://docs.example.com --json`,
+		`    ${g} ${NAME} audit https://docs.example.com`,
+		`    ${g} ${NAME} audit https://docs.example.com --min-score 70   ${d("# CI gate")}`,
+		`    ${g} ${NAME} audit https://docs.example.com --json`,
 		`    ${g} ${NAME} journey "Find the API docs and how to authenticate" --domain stripe.com`,
-		`    ${g} ${NAME} journey "Sign up for an account" --domain example.com --harness codex`,
 		"",
-		`  ${d("scan options:")}`,
-		`    --json           ${d("Output as JSON")}`,
+		`  ${d("audit options:")}`,
+		`    --min-score <n>  ${d("Exit 1 when the score is below n (0-100); the CI gate")}`,
+		`    --max-age <s>    ${d("Accept a cached result up to s seconds old (default 6h)")}`,
+		`    --force          ${d("Bypass the cache and rescan (6/day budget)")}`,
+		`    --tunnel-cmd <c> ${d("Expose a local target via your own tunnel command (e.g. 'ngrok http 3000 --log stdout')")}`,
+		`    --json           ${d("Print the raw ora audit payload as JSON")}`,
 		`    --show-passing   ${d("List each passing check (hidden by default)")}`,
 		`    --show-skipped   ${d("List skipped checks (hidden by default)")}`,
+		"",
+		`  ${d("audit exit codes:")}`,
+		`    ${d("0 success · 1 below --min-score · 2 usage error · 3 API unreachable/rate-limited")}`,
 		"",
 		`  ${d("journey options:")}`,
 		`    --domain <d>     ${d("Site the agent targets (e.g. stripe.com)")}`,
@@ -114,7 +183,7 @@ const root = defineCommand({
 		version: pkg.version,
 		description: "Score any site's agent readiness — and watch real AI agents navigate it",
 	},
-	subCommands: { scan, journey },
+	subCommands: { audit, journey, skill },
 	setup() {
 		// Bare invocation and top-level --help get the curated screen; subcommand
 		// --help stays with citty's generated usage.

@@ -54,12 +54,12 @@ check("--version matches package.json", () => {
 
 check("--help exits 0 and lists both commands", () => {
 	const help = ax(["--help"]);
-	for (const command of ["scan", "journey"]) {
+	for (const command of ["audit", "journey"]) {
 		if (!help.includes(command)) throw new Error(`help omits "${command}"`);
 	}
 });
 
-check("scan --help exits 0", () => ax(["scan", "--help"]));
+check("audit --help exits 0", () => ax(["audit", "--help"]));
 check("journey --help exits 0", () => ax(["journey", "--help"]));
 
 if (failures.length > 0) {

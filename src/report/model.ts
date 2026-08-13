@@ -1,26 +1,26 @@
-import type { ScanCheck, ScanCheckStatus, ScanResult } from "../api/scan";
+import type { AuditOutcome, AuditResult } from "../api/audit";
+import type { AuditScanResult, AuditTopFix } from "../contract";
 
-// The report model the renderers consume, plus the mapping from ora's raw
-// ScanResult into it. Kept separate from the API client so the wire shape can
-// evolve without touching presentation.
-
-export type CheckTier = "required" | "recommended" | "optional";
-
-export const TIER_RANK: Record<CheckTier, number> = { required: 0, recommended: 1, optional: 2 };
+// The report model the terminal renderer consumes, mapped 1:1 from ora's
+// audit payload. Thin client rule: no interpretation happens here - the grade
+// comes from the API, the fix ranking is the payload's topFixes verbatim, and
+// tiers are not re-derived (ora's tiers are display-only and never determine
+// score, so the report does not bucket by them).
 
 export interface ReportCheck {
+	id: string;
 	name: string;
 	passed: boolean;
 	skipped?: boolean;
 	/** The finding — what the scan observed. */
 	detail?: string;
-	/** The fix — what to implement. */
+	/** The fix — what to implement (the payload's `recommendation`). */
 	hint?: string;
-	url?: string;
-	tier: CheckTier;
-	/** ora's raw verdict for this check, when known. */
-	status?: ScanCheckStatus;
-	/** Estimated points recovered by fixing this check, when known. */
+	/** Canonical spec / standard URL for the check, when ora publishes one. */
+	specUrl?: string;
+	/** ora's raw verdict for this check. */
+	status: string;
+	/** Estimated 0-100 points recovered by fixing this check (an estimate). */
 	estScoreGain?: number;
 }
 
@@ -35,19 +35,23 @@ export interface ReportSection {
 }
 
 export interface Report {
-	url: string;
+	/** What the user asked to audit (display only). */
+	target: string;
 	score: number;
-	rating: string;
+	/** ora's letter grade, straight from the payload. */
+	grade: string;
 	/** ora's one-line agentic verdict, when it arrived. */
 	summary?: string;
 	sections: ReportSection[];
-}
-
-export function ratingFor(score: number): string {
-	if (score >= 90) return "Excellent";
-	if (score >= 70) return "Good";
-	if (score >= 50) return "Fair";
-	return "Needs Improvement";
+	/** The payload's server-ranked fix list, order untouched. */
+	topFixes: AuditTopFix[];
+	/** Canonical ora.ai deep link for the full report. */
+	reportUrl: string;
+	/** Present when the freshness gate served a stored result. */
+	cacheAgeSeconds?: number;
+	analysisStatus?: string;
+	/** MCP handshake demanded credentials: score 0 means "could not evaluate". */
+	mcpAuthRequired?: boolean;
 }
 
 export function sectionOf(name: string, checks: ReportCheck[]): ReportSection {
@@ -61,56 +65,50 @@ export function sectionOf(name: string, checks: ReportCheck[]): ReportSection {
 	};
 }
 
-/**
- * ora has no required/recommended/optional notion; approximate one from each
- * check's weight relative to the heaviest check in its layer, so the report
- * can keep a "most important first" ordering.
- */
-function tierOf(weight: number, heaviest: number): CheckTier {
-	if (heaviest <= 0) return "recommended";
-	const share = weight / heaviest;
-	if (share >= 0.75) return "required";
-	if (share >= 0.4) return "recommended";
-	return "optional";
-}
-
-function convertCheck(raw: ScanCheck, heaviest: number): ReportCheck {
+function convertCheck(raw: AuditResult["layers"][number]["checks"][number]): ReportCheck {
 	// pass → passed; na/pending → skipped (kept out of every count);
 	// fail/warning/error all surface as issues (warning just gets a softer glyph).
 	const passed = raw.status === "pass";
 	const skipped = raw.status === "na" || raw.status === "pending";
 
 	const check: ReportCheck = {
+		id: raw.id,
 		name: raw.name,
 		passed,
-		tier: tierOf(raw.maxScore ?? 0, heaviest),
 		status: raw.status,
 	};
 	if (skipped) check.skipped = true;
-	if (raw.details) check.detail = raw.details;
+	if (skipped && raw.naReason) check.detail = raw.naReason;
+	else if (raw.details) check.detail = raw.details;
 	if (typeof raw.estScoreGain === "number") check.estScoreGain = raw.estScoreGain;
+	if (raw.specUrl) check.specUrl = raw.specUrl;
 	// The how-to-fix column must come from `recommendation` (the remedy) and
-	// never `description` (a restatement of what the check inspects).
+	// never `details` (the observation).
 	if (!passed && !skipped && raw.recommendation) check.hint = raw.recommendation;
 	return check;
 }
 
-export function toReport(scan: ScanResult, requestedUrl: string): Report {
-	const sections = (scan.layers ?? []).map((layer) => {
-		const heaviest = layer.checks.reduce((top, c) => Math.max(top, c.maxScore ?? 0), 0);
-		return sectionOf(
-			layer.name,
-			layer.checks.map((c) => convertCheck(c, heaviest)),
-		);
-	});
+export function toReport(outcome: AuditOutcome, requestedUrl: string): Report {
+	const { result } = outcome;
+	const sections = (result.layers ?? []).map((layer) =>
+		sectionOf(layer.name, (layer.checks ?? []).map(convertCheck)),
+	);
 
-	const score = Math.min(100, Math.max(0, Math.round(scan.score ?? 0)));
-
-	return {
-		url: scan.url ?? requestedUrl,
-		score,
-		rating: ratingFor(score),
-		summary: scan.agenticSummary,
+	const report: Report = {
+		target: result.domain || requestedUrl,
+		score: result.score,
+		grade: result.grade,
+		summary: outcome.verdict,
 		sections,
+		topFixes: result.topFixes ?? [],
+		reportUrl: result.url,
+		analysisStatus: result.analysisStatus,
 	};
+	// Freshness provenance rides scan-shaped payloads only.
+	const scanShaped = result as AuditScanResult;
+	if (scanShaped.servedFromCache && typeof scanShaped.resultAgeSeconds === "number") {
+		report.cacheAgeSeconds = scanShaped.resultAgeSeconds;
+	}
+	if (result.mcpAuthRequired) report.mcpAuthRequired = true;
+	return report;
 }

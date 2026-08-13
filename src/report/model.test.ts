@@ -1,151 +1,81 @@
 import { describe, expect, it } from "vitest";
-import type { ScanResult } from "../api/scan";
-import { type ReportCheck, ratingFor, sectionOf, toReport } from "./model";
+// Captured from a real audit-format terminal event (contract 1.8.0,
+// example.com, 2026-08-13). Real shape - variations are explicit deltas.
+import realAuditScan from "../api/__fixtures__/audit-scan.json";
+import type { AuditScanResult } from "../contract";
+import { toReport } from "./model";
 
-const SCAN: ScanResult = {
-	domain: "acme.dev",
-	url: "https://acme.dev",
-	score: 82,
-	grade: "B",
-	analysisStatus: "complete",
-	agenticSummary: "acme.dev greets agents well but hides its spec.",
-	pendingChecks: [],
-	layers: [
-		{
-			id: "access",
-			name: "Agent Access",
-			score: 12,
-			maxScore: 24,
-			checks: [
-				{
-					id: "gateway",
-					name: "agent gateway",
-					description: "Serves markdown to agent user-agents",
-					status: "pass",
-					score: 10,
-					maxScore: 10,
-					details: "content negotiated",
-				},
-				{
-					id: "mirror",
-					name: "markdown mirror",
-					description: "A .md twin exists for every page",
-					status: "fail",
-					score: 0,
-					maxScore: 6,
-					details: "0 of 12 pages mirrored",
-					recommendation: "Serve a .md variant of each documentation page",
-					estScoreGain: 1.8,
-				},
-				{
-					id: "mcp",
-					name: "mcp endpoint",
-					description: "Advertises an MCP server",
-					status: "na",
-					score: 0,
-					maxScore: 4,
-					details: "not applicable here",
-				},
-				{
-					id: "crawlers",
-					name: "crawler policy",
-					description: "AI crawlers may fetch content",
-					status: "warning",
-					score: 2,
-					maxScore: 4,
-					details: "two bots blocked",
-				},
-			],
-		},
-	],
-};
+const FIXTURE = realAuditScan as unknown as AuditScanResult;
 
-const pick = (checks: ReportCheck[], name: string) => checks.find((c) => c.name === name);
+const outcome = (extra: Partial<AuditScanResult> = {}, verdict?: string) => ({
+	result: { ...FIXTURE, ...extra },
+	verdict,
+});
 
 describe("toReport", () => {
-	it("turns layers into sections and keeps score + rating", () => {
-		const report = toReport(SCAN, "https://acme.dev");
-		expect(report.url).toBe("https://acme.dev");
-		expect(report.score).toBe(82);
-		expect(report.rating).toBe("Good");
-		expect(report.sections.map((s) => s.name)).toEqual(["Agent Access"]);
+	it("maps the payload without re-deriving interpretation", () => {
+		const report = toReport(outcome({}, "A fine site."), "https://example.com");
+
+		expect(report.target).toBe(FIXTURE.domain);
+		expect(report.score).toBe(FIXTURE.score);
+		// Grade comes from the API - there is no client-side rating scale.
+		expect(report.grade).toBe(FIXTURE.grade);
+		expect(report.summary).toBe("A fine site.");
+		expect(report.reportUrl).toBe(FIXTURE.url);
+		expect(report.sections).toHaveLength(FIXTURE.layers.length);
 	});
 
-	it("counts pass/fail/skip with na+pending excluded and warning as a failure", () => {
-		const [section] = toReport(SCAN, "x").sections;
-		expect(section.passed).toBe(1);
-		expect(section.total).toBe(3); // mcp endpoint (na) is out of the denominator
-		expect(section.skipped).toBe(1);
-		expect(pick(section.checks, "crawler policy")?.passed).toBe(false);
-		expect(pick(section.checks, "mcp endpoint")).toMatchObject({ passed: false, skipped: true });
+	it("passes topFixes through in the server's order, untouched", () => {
+		const report = toReport(outcome(), "example.com");
+		expect(report.topFixes).toEqual(FIXTURE.topFixes);
 	});
 
-	it("keeps the raw status, estScoreGain, and summary", () => {
-		const report = toReport(SCAN, "x");
-		expect(report.summary).toBe("acme.dev greets agents well but hides its spec.");
-		const checks = report.sections[0].checks;
-		expect(pick(checks, "agent gateway")?.status).toBe("pass");
-		expect(pick(checks, "crawler policy")?.status).toBe("warning");
-		expect(pick(checks, "markdown mirror")?.estScoreGain).toBe(1.8);
+	it("counts pass/fail/skip per section like the payload says", () => {
+		const report = toReport(outcome(), "example.com");
+		for (const [i, layer] of FIXTURE.layers.entries()) {
+			const section = report.sections[i];
+			const counted = layer.checks.filter((c) => c.status !== "na" && c.status !== "pending");
+			expect(section.total).toBe(counted.length);
+			expect(section.passed).toBe(counted.filter((c) => c.status === "pass").length);
+			expect(section.skipped).toBe(layer.checks.length - counted.length);
+		}
 	});
 
-	it("takes the fix from `recommendation`, never from `description`", () => {
-		const checks = toReport(SCAN, "x").sections[0].checks;
-		const mirror = pick(checks, "markdown mirror");
-		expect(mirror?.detail).toBe("0 of 12 pages mirrored");
-		expect(mirror?.hint).toBe("Serve a .md variant of each documentation page");
-		// passing and skipped checks never get a hint
-		expect(pick(checks, "agent gateway")?.hint).toBeUndefined();
-		expect(pick(checks, "mcp endpoint")?.hint).toBeUndefined();
+	it("carries specUrl and estScoreGain onto checks that have them", () => {
+		const report = toReport(outcome(), "example.com");
+		const flat = report.sections.flatMap((s) => s.checks);
+		const withSpec = FIXTURE.layers.flatMap((l) => l.checks).filter((c) => c.specUrl);
+		expect(withSpec.length).toBeGreaterThan(0);
+		for (const raw of withSpec) {
+			expect(flat.find((c) => c.id === raw.id)?.specUrl).toBe(raw.specUrl);
+		}
 	});
 
-	it("derives tiers from each check's weight within its layer", () => {
-		const checks = toReport(SCAN, "x").sections[0].checks;
-		expect(pick(checks, "agent gateway")?.tier).toBe("required"); // 10/10
-		expect(pick(checks, "markdown mirror")?.tier).toBe("recommended"); // 6/10
-		expect(pick(checks, "crawler policy")?.tier).toBe("recommended"); // 4/10
+	it("hints only from recommendation, never from details", () => {
+		const report = toReport(outcome(), "example.com");
+		const flat = report.sections.flatMap((s) => s.checks);
+		const raw = FIXTURE.layers.flatMap((l) => l.checks);
+		for (const check of flat.filter((c) => !c.passed && !c.skipped)) {
+			const source = raw.find((r) => r.id === check.id && r.status === check.status);
+			if (check.hint) expect(check.hint).toBe(source?.recommendation);
+		}
 	});
 
-	it("clamps scores into 0-100 and falls back to the requested URL", () => {
-		expect(toReport({ score: 140, layers: [] }, "x").score).toBe(100);
-		expect(toReport({ score: -5, layers: [] }, "x").score).toBe(0);
-		expect(toReport({ score: 50 }, "https://asked.example").url).toBe("https://asked.example");
-		expect(toReport({ score: 50, layers: [] }, "x").sections).toEqual([]);
-	});
-});
-
-describe("ratingFor", () => {
-	it("maps the score bands", () => {
-		expect(ratingFor(100)).toBe("Excellent");
-		expect(ratingFor(90)).toBe("Excellent");
-		expect(ratingFor(89)).toBe("Good");
-		expect(ratingFor(70)).toBe("Good");
-		expect(ratingFor(69)).toBe("Fair");
-		expect(ratingFor(50)).toBe("Fair");
-		expect(ratingFor(49)).toBe("Needs Improvement");
-		expect(ratingFor(0)).toBe("Needs Improvement");
-	});
-});
-
-describe("sectionOf", () => {
-	const entry = (name: string, passed: boolean, skipped = false): ReportCheck => ({
-		name,
-		passed,
-		skipped: skipped || undefined,
-		tier: "recommended",
+	it("surfaces freshness provenance from a cache hit", () => {
+		const report = toReport(
+			outcome({ servedFromCache: true, resultAgeSeconds: 2580 } as Partial<AuditScanResult>),
+			"example.com",
+		);
+		expect(report.cacheAgeSeconds).toBe(2580);
+		expect(toReport(outcome(), "example.com").cacheAgeSeconds).toBeUndefined();
 	});
 
-	it("excludes skipped checks from the totals but keeps them on the section", () => {
-		const section = sectionOf("S", [entry("a", true), entry("b", false), entry("c", false, true)]);
-		expect(section.passed).toBe(1);
-		expect(section.total).toBe(2);
-		expect(section.skipped).toBe(1);
-		expect(section.checks).toHaveLength(3);
-	});
-
-	it("handles an all-skipped section", () => {
-		const section = sectionOf("S", [entry("a", false, true), entry("b", false, true)]);
-		expect(section.total).toBe(0);
-		expect(section.skipped).toBe(2);
+	it("flags an auth-gated MCP result as unscored", () => {
+		const report = toReport(
+			outcome({ mcpAuthRequired: true, score: 0, grade: "F", layers: [], topFixes: [] }),
+			"example.com",
+		);
+		expect(report.mcpAuthRequired).toBe(true);
+		expect(report.topFixes).toEqual([]);
 	});
 });
