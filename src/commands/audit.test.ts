@@ -62,6 +62,18 @@ describe("auditCommand exit codes", () => {
 		expect(perform).not.toHaveBeenCalled();
 	});
 
+	it("2 on a local target without a tunnel command, without calling the API", async () => {
+		const saved = process.env.ORA_TUNNEL_CMD;
+		delete process.env.ORA_TUNNEL_CMD;
+		try {
+			const perform = vi.mocked(api.performAudit);
+			expect(await run({ url: "localhost:3000" })).toBe(EXIT.USAGE);
+			expect(perform).not.toHaveBeenCalled();
+		} finally {
+			if (saved !== undefined) process.env.ORA_TUNNEL_CMD = saved;
+		}
+	});
+
 	it("3 when the API is unreachable or rate limited", async () => {
 		vi.mocked(api.performAudit).mockRejectedValue(new api.AuditApiError("ora rate limit exceeded"));
 		expect(await run()).toBe(EXIT.API);

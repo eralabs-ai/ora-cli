@@ -38,11 +38,10 @@ const audit = defineCommand({
 			description: "Bypass the cache and rescan (spends the stricter 6/day force budget)",
 			default: false,
 		},
-		tunnel: {
-			type: "boolean",
+		"tunnel-cmd": {
+			type: "string",
 			description:
-				"Audit through a cloudflared quick tunnel (implied for localhost / *.local targets; requires cloudflared preinstalled)",
-			default: false,
+				"Command that exposes a local target and prints its public https URL (e.g. 'ngrok http 3000 --log stdout'); also read from ORA_TUNNEL_CMD. The result is stored as ephemeral",
 		},
 		"show-passing": {
 			type: "boolean",
@@ -67,7 +66,7 @@ const audit = defineCommand({
 			minScore: args["min-score"] as string | undefined,
 			maxAge: args["max-age"] as string | undefined,
 			force: Boolean(args.force),
-			tunnel: Boolean(args.tunnel),
+			tunnelCmd: args["tunnel-cmd"] as string | undefined,
 		});
 	},
 });
@@ -160,7 +159,7 @@ function helpScreen(): string {
 		`    --min-score <n>  ${d("Exit 1 when the score is below n (0-100); the CI gate")}`,
 		`    --max-age <s>    ${d("Accept a cached result up to s seconds old (default 6h)")}`,
 		`    --force          ${d("Bypass the cache and rescan (6/day budget)")}`,
-		`    --tunnel         ${d("Audit localhost via a cloudflared quick tunnel (auto for local targets)")}`,
+		`    --tunnel-cmd <c> ${d("Expose a local target via your own tunnel command (e.g. 'ngrok http 3000 --log stdout')")}`,
 		`    --json           ${d("Print the raw ora audit payload as JSON")}`,
 		`    --show-passing   ${d("List each passing check (hidden by default)")}`,
 		`    --show-skipped   ${d("List skipped checks (hidden by default)")}`,

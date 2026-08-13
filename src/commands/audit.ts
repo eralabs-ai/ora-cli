@@ -1,7 +1,7 @@
 import { AuditApiError, type AuditOutcome, performAudit } from "../api/audit";
 import { toReport } from "../report/model";
 import { renderReport } from "../report/terminal";
-import { isLocalTarget, openTunnel, type Tunnel, TunnelError } from "../tunnel";
+import { isLocalTarget, openTunnel, type Tunnel } from "../tunnel";
 import { spinner } from "../ui/spinner";
 
 export interface AuditCommandInput {
@@ -14,15 +14,15 @@ export interface AuditCommandInput {
 	/** Raw --max-age value in seconds. */
 	maxAge?: string;
 	force: boolean;
-	/** Tunnel the target through cloudflared (implied for local targets). */
-	tunnel?: boolean;
+	/** User-supplied command that exposes the target and prints a public https URL. */
+	tunnelCmd?: string;
 }
 
 /**
  * The documented exit-code contract (README + --help):
  *   0 success (and score >= --min-score when given)
  *   1 score below --min-score
- *   2 usage error (bad flags, malformed URL, cloudflared missing)
+ *   2 usage error (bad flags, malformed URL, local target without a tunnel)
  *   3 API unreachable / timeout / rate limit exhausted
  */
 export const EXIT = { OK: 0, BELOW_MIN_SCORE: 1, USAGE: 2, API: 3 } as const;
@@ -73,13 +73,28 @@ export async function auditCommand(input: AuditCommandInput): Promise<number> {
 		}
 	}
 
+	// A local target only exists on this machine, so ora can never reach it
+	// directly. The CLI ships no tunnel vendor of its own: the user supplies
+	// the command (--tunnel-cmd / ORA_TUNNEL_CMD) and the result is stored as
+	// ephemeral so the throwaway hostname never pollutes rankings.
+	const tunnelCmd = input.tunnelCmd?.trim() || process.env.ORA_TUNNEL_CMD?.trim();
+	const useTunnel = Boolean(tunnelCmd);
+	if (!useTunnel && isLocalTarget(target)) {
+		console.error(
+			[
+				`${target} only exists on this machine, and ora audits public URLs.`,
+				"Either audit a publicly reachable deployment of this site (e.g. a preview URL),",
+				"or run it through a tunnel you provide:",
+				"  ax audit localhost:3000 --tunnel-cmd 'ngrok http 3000 --log stdout'",
+				"Any command that prints a public https URL works; the result is stored as",
+				"ephemeral (excluded from rankings, deleted after a few days).",
+			].join("\n"),
+		);
+		return EXIT.USAGE;
+	}
+
 	const interactive = !input.json;
 	if (interactive) spinner.start(`Auditing ${target} with ora`);
-
-	// A local target only exists on this machine, so ora can never reach it
-	// directly - tunnel it (also on explicit --tunnel) and store the result as
-	// ephemeral so the throwaway hostname never pollutes rankings.
-	const useTunnel = Boolean(input.tunnel) || isLocalTarget(target);
 	let tunnel: Tunnel | undefined;
 	const closeTunnel = () => tunnel?.close();
 	const onSignal = (signal: NodeJS.Signals) => {
@@ -87,10 +102,10 @@ export async function auditCommand(input: AuditCommandInput): Promise<number> {
 		process.exit(signal === "SIGINT" ? 130 : 143);
 	};
 	let auditTarget = target;
-	if (useTunnel) {
-		if (interactive) spinner.update(`Opening a cloudflared tunnel to ${target}`);
+	if (useTunnel && tunnelCmd) {
+		if (interactive) spinner.update(`Opening a tunnel to ${target}`);
 		try {
-			tunnel = await openTunnel(target);
+			tunnel = await openTunnel(tunnelCmd);
 		} catch (cause) {
 			spinner.stop();
 			console.error(cause instanceof Error ? cause.message : String(cause));

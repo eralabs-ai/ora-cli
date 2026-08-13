@@ -15,7 +15,7 @@ Three commands:
 ## audit
 
 ```
-ax audit <url> [--min-score n] [--max-age s] [--force] [--tunnel] [--json] [--show-passing] [--show-skipped]
+ax audit <url> [--min-score n] [--max-age s] [--force] [--tunnel-cmd c] [--json] [--show-passing] [--show-skipped]
 ```
 
 ```
@@ -45,7 +45,7 @@ ax audit <url> [--min-score n] [--max-age s] [--force] [--tunnel] [--json] [--sh
 | `--min-score <n>` | Exit `1` when the score is below `n` (0-100) — the CI gate |
 | `--max-age <s>` | Accept a cached result up to `s` seconds old (server default 6h, clamped to 1-24h) |
 | `--force` | Bypass the cache and rescan — spends the stricter 6/day force budget |
-| `--tunnel` | Audit localhost through a cloudflared quick tunnel (implied for local targets) |
+| `--tunnel-cmd <c>` | Expose a local target through your own tunnel command and audit the public URL it prints (also read from `ORA_TUNNEL_CMD`) |
 | `--json` | The raw ora audit payload on stdout, exactly as the API served it |
 | `--show-passing` | List every passing check, not just the per-layer summary bar |
 | `--show-skipped` | Include not-applicable/pending checks with their reason |
@@ -65,18 +65,23 @@ Exit codes are the contract:
 |---|---|
 | `0` | success (and score ≥ `--min-score` when given) |
 | `1` | score below `--min-score` |
-| `2` | usage error — bad flags, malformed URL, cloudflared missing |
+| `2` | usage error — bad flags, malformed URL, local target without a tunnel |
 | `3` | API unreachable, timeout, or rate limit exhausted |
 
 Budget notes: ora allows 30 scans + 6 `--force` scans per rolling 24h per IP (plus a 10/min burst limit). Results served from the freshness cache cost nothing, so a CI job that audits on every push stays well inside the budget — tune the window with `--max-age`, and reserve `--force` for verifying a fix you just deployed. An auth-gated MCP target reports `mcpAuthRequired` and scores 0 as "could not evaluate"; `--min-score` deliberately skips the gate rather than failing on it.
 
-### Auditing localhost (`--tunnel`)
+### Auditing localhost (`--tunnel-cmd`)
 
-A local dev server only exists on your machine, so ora can't reach it. `--tunnel` (implied when the target is `localhost`, `127.0.0.1`, `*.local`, or `*.localhost`) opens a [cloudflared quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/), audits the throwaway hostname, and tears the tunnel down when done.
+A local dev server only exists on your machine, so ora can't reach it. The simplest option is to audit a publicly reachable deployment of the same code (e.g. a preview URL). To audit localhost itself, bring your own tunnel: pass `--tunnel-cmd` (or set `ORA_TUNNEL_CMD`) with a command that exposes the local server and prints its public `https://` URL. The CLI runs it, audits the URL it prints, and tears the tunnel down when done.
 
-- **cloudflared must be preinstalled** (`brew install cloudflared` / `winget install Cloudflare.cloudflared`). The CLI never downloads executables at runtime.
+```
+ax audit localhost:3000 --tunnel-cmd 'ngrok http 3000 --log stdout'
+```
+
+- **The CLI ships no tunnel vendor and never downloads executables at runtime** — any tunnel tool you already have works, as long as it prints its public URL to stdout or stderr.
 - The result is stored as **ephemeral**: excluded from ora's rankings and deleted after a few days.
 - Off-site checks (registry listings, brand search) usually fail for a throwaway tunnel hostname — the report says so. Use tunnel audits to iterate on your on-site surface, not to compare scores.
+- Free tiers of some tunnel vendors serve an interstitial warning page to browser-like requests, which can distort what the scanner sees — prefer a vendor/plan that serves your origin directly.
 
 ## skill
 
