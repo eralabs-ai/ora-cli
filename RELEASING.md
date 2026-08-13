@@ -13,6 +13,13 @@ laptop.
    - `major` — breaking changes to commands, flags, or output
    - `none` — publish `package.json`'s current version as-is
 4. Leave `dry_run` unchecked. Run it.
+5. If the release changes the command/flag surface the agent-ready-website
+   skill invokes (today: `audit` and the flags its playbook shows), bump the
+   pinned `CLI_RANGE` in the main repo's
+   `src/lib/mcp/skills-content/agent-ready-website.ts` in the same breath and
+   run `npm run skills:gen` there - the skill's `npx @ora-ai/ax@<range>` calls
+   resolve only the release line the playbook documents, so a range left
+   behind quietly routes agents to the API fallback instead of the new CLI.
 
 The workflow lints, typechecks, tests, bumps, builds, smoke-tests the bundled
 binary, publishes to npm with provenance, then commits `chore(release): vX.Y.Z`,
