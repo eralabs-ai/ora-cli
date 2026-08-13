@@ -35,7 +35,9 @@ function parseIntFlag(
 ): { value?: number; error?: string } {
 	if (raw === undefined) return {};
 	const value = Number(raw);
-	if (!Number.isInteger(value) || value < min || value > max) {
+	// Number("") is 0, so an empty value (e.g. an unset CI variable expanding
+	// to "") would silently become a gate of 0 - reject it as a usage error.
+	if (raw.trim() === "" || !Number.isInteger(value) || value < min || value > max) {
 		return {
 			error: `${flag} must be an integer between ${min} and ${max}, got ${JSON.stringify(raw)}`,
 		};
@@ -80,6 +82,10 @@ export async function auditCommand(input: AuditCommandInput): Promise<number> {
 	const useTunnel = Boolean(input.tunnel) || isLocalTarget(target);
 	let tunnel: Tunnel | undefined;
 	const closeTunnel = () => tunnel?.close();
+	const onSignal = (signal: NodeJS.Signals) => {
+		closeTunnel();
+		process.exit(signal === "SIGINT" ? 130 : 143);
+	};
 	let auditTarget = target;
 	if (useTunnel) {
 		if (interactive) spinner.update(`Opening a cloudflared tunnel to ${target}`);
@@ -90,9 +96,11 @@ export async function auditCommand(input: AuditCommandInput): Promise<number> {
 			console.error(cause instanceof Error ? cause.message : String(cause));
 			return EXIT.USAGE;
 		}
-		// The tunnel must not outlive an interrupted run.
-		process.on("SIGINT", closeTunnel);
-		process.on("SIGTERM", closeTunnel);
+		// The tunnel must not outlive an interrupted run. Installing a signal
+		// listener removes Node's default exit, so after cleanup the handler
+		// must terminate the process itself (conventional 128 + signal codes).
+		process.on("SIGINT", onSignal);
+		process.on("SIGTERM", onSignal);
 		auditTarget = tunnel.url;
 	}
 
@@ -110,8 +118,8 @@ export async function auditCommand(input: AuditCommandInput): Promise<number> {
 		return cause instanceof AuditApiError ? EXIT.API : EXIT.USAGE;
 	} finally {
 		closeTunnel();
-		process.removeListener("SIGINT", closeTunnel);
-		process.removeListener("SIGTERM", closeTunnel);
+		process.removeListener("SIGINT", onSignal);
+		process.removeListener("SIGTERM", onSignal);
 	}
 	spinner.stop();
 
