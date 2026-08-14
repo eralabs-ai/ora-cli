@@ -590,6 +590,16 @@ export interface components {
         num_turns?: number;
         /** @description Wall-clock run duration */
         duration_ms?: number;
+        /** @description Model spend for the run in USD. Experimental: tracks provider accounting and may change or disappear without a major version. */
+        cost_usd?: number;
+        /** @description Total input tokens the run consumed. Experimental. */
+        input_tokens?: number;
+        /** @description Total output tokens the run produced. Experimental. */
+        output_tokens?: number;
+        /** @description Prompt-cache read tokens. Experimental. */
+        cache_read_tokens?: number;
+        /** @description Prompt-cache write tokens. Experimental. */
+        cache_write_tokens?: number;
         /** @description The full step tree the agent took */
         trajectory: {
           /** @description Cumulative step tree, in emission order */
@@ -807,6 +817,16 @@ export interface components {
       num_turns?: number;
       /** @description Wall-clock run duration */
       duration_ms?: number;
+      /** @description Model spend for the run in USD. Experimental: tracks provider accounting and may change or disappear without a major version. */
+      cost_usd?: number;
+      /** @description Total input tokens the run consumed. Experimental. */
+      input_tokens?: number;
+      /** @description Total output tokens the run produced. Experimental. */
+      output_tokens?: number;
+      /** @description Prompt-cache read tokens. Experimental. */
+      cache_read_tokens?: number;
+      /** @description Prompt-cache write tokens. Experimental. */
+      cache_write_tokens?: number;
       /** @description The full step tree the agent took */
       trajectory: {
         /** @description Cumulative step tree, in emission order */
@@ -2112,11 +2132,17 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Per-target cap hit - the freshness analog, not an error: the body is the most recent stored run for this exact (domain, intent, harness, model) target, marked `rate_limited: true`, so CI and agents get the newest result without spending a run. Replay it via its `stream_url`. */
+      /** @description Per-target cap hit - the freshness analog, not an error: the body is the most recent stored run for this exact (domain, intent, harness, model) target, marked `rate_limited: true`, so CI and agents get the newest result without spending a run. When the served run has finished, the body also carries `verdict` and `step_count`. Replay it via its `stream_url`. */
       200: {
         headers: {
           /** @description Seconds until the target's oldest in-window run ages out */
           "Retry-After"?: number;
+          /** @description Per-target window size (5 runs per rolling 24h) */
+          "X-RateLimit-Limit"?: number;
+          /** @description Always 0 on a capped response */
+          "X-RateLimit-Remaining"?: number;
+          /** @description Unix seconds when the next per-target slot frees */
+          "X-RateLimit-Reset"?: number;
         };
         content: {
           "application/json": components["schemas"]["JourneyCappedRun"];
