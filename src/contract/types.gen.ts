@@ -119,6 +119,41 @@ export interface paths {
      */
     get: operations["ardGetJwks"];
   };
+  "/api/journey/runs": {
+    /**
+     * Run an agent journey against a domain
+     * @description Triggers a real agent run: an AI agent (harness + model) attempts a curated task (an intent) against the given domain, and ora records the trajectory and derives insights. Two-step flow: this endpoint returns fast with a run record whose `stream_url` serves the live trajectory as Server-Sent Events; poll GET /api/journey/runs/{id} instead if you do not want the stream. Only curated intents run publicly (see GET /api/journey/intents) - the server derives the actual agent prompt from the intent id, so no free-text prompt can reach the engine. Only publicly runnable agents are accepted (see GET /api/journey/agents). Unknown body fields are rejected (strict schema). Rate limited three ways: a 20-per-minute burst cap per IP; a per-target cap of 5 runs per rolling 24h per (domain, intent, harness, model) - when a target is over the cap the response is HTTP 200 with the most recent stored run for that target (`rate_limited: true`) plus Retry-After, the freshness analog: a denied trigger still returns the newest result and consumes nothing; and a durable per-caller cap of 10 runs per rolling 24h per IP - exceeded, that one is a real 429 with `retry_after_ms` (there is no cached result to serve for a caller). Successful and capped responses carry X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Reset headers for the per-target window. Note: journey insights use the 5-layer journey taxonomy (discovery, identity, access, payments, experience), deliberately distinct from the 4 scoring layers of the audit report (POST /api/scan) - never map between the two.
+     */
+    post: operations["createJourneyRun"];
+  };
+  "/api/journey/runs/{id}": {
+    /**
+     * Get a journey run record (non-streaming)
+     * @description Returns the run record by id. While the run executes, `status` is 'running' - open the stream or poll. Once finished and persisted, `status` is 'succeeded' and the body carries `verdict`, `step_count` (billable steps - the same counter run pricing uses), and the full `result` (trajectory + insight + signals). `status` 'failed' is terminal with no result. `result` is present iff status is 'succeeded'.
+     */
+    get: operations["getJourneyRun"];
+  };
+  "/api/journey/runs/{id}/stream": {
+    /**
+     * Stream a journey run's trajectory as Server-Sent Events
+     * @description The live trajectory SSE for a run created by POST /api/journey/runs. Event names (stable): `run_id` ({ run_id }), then progressive `trajectory` frames (cumulative snapshots, each a { steps, ... } object of JourneyTrajectoryStep items), optionally `processing` ({ message }) while insights generate, and finally exactly one of `result` (a JourneyRunResult) or `error` ({ message }). Reopening the stream of a finished run replays the stored result instead of re-executing the agent (pass ?replay=1 for paced frames, plus &quick=1 to skip the startup delay); a plain reopen renders the finished journey in one frame. Long-lived: a live run can hold the connection for many minutes (function ceiling 800s). Rate limited 20 per minute per IP.
+     */
+    get: operations["streamJourneyRun"];
+  };
+  "/api/journey/intents": {
+    /**
+     * List the curated journey intents
+     * @description The curated tasks a public journey run can execute. Each entry carries the stable `id` (what POST /api/journey/runs takes), a short `label`, a one-line `hint`, and the user-facing `template` phrasing. Cached statically.
+     */
+    get: operations["listJourneyIntents"];
+  };
+  "/api/journey/agents": {
+    /**
+     * List the publicly runnable journey agents
+     * @description The agents an anonymous POST /api/journey/runs accepts - every listed (harness, model) pair is publicly runnable. Entries carry display metadata (label, variant, brand, blurb) plus the wire fields `harness` and `model`. Cached statically.
+     */
+    get: operations["listJourneyAgents"];
+  };
   "/api/feedback/{domain}": {
     /**
      * Get agent feedback for a product
@@ -272,7 +307,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a stable field or check id was removed, renamed, or changed meaning. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.8.0";
+      contractVersion: "1.9.0";
       /**
        * @description Present only when this body is a stored result served by the freshness gate instead of a fresh scan. Absent on a live scan.
        * @enum {boolean}
@@ -384,7 +419,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a stable field or check id was removed, renamed, or changed meaning. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.8.0";
+      contractVersion: "1.9.0";
       /** @description Wall-clock duration of the scan that produced this stored result */
       durationMs: number | null;
       /**
@@ -415,6 +450,641 @@ export interface components {
       competitors?: {
         [key: string]: unknown;
       } | null;
+    };
+    JourneyRun: {
+      /** @description Run id - the handle for GET /api/journey/runs/{id} and the stream */
+      id: string;
+      /**
+       * @description Lifecycle status. failed is terminal; a failed run has no result.
+       * @enum {string}
+       */
+      status: "running" | "succeeded" | "failed";
+      /** @description Curated intent id (see GET /api/journey/intents) */
+      intent_id?: string;
+      /** @description Target domain */
+      domain?: string;
+      /** @description The agent configuration that ran (or is running) */
+      agent: {
+        /** @description Agent harness wire name */
+        harness: string;
+        /** @description Model the harness drives */
+        model: string;
+      };
+      started_at: string;
+      finished_at?: string;
+      /** @description SSE stream for this run: run_id -> trajectory -> processing -> result | error */
+      stream_url: string;
+      /**
+       * @description Canonical success verdict, present once the run finished
+       * @enum {string}
+       */
+      verdict?: "satisfied" | "partial" | "unsatisfied" | "not_gradable";
+      /** @description Billable steps the run took (tool calls, excluding narration and filesystem ops), present once the run finished. This is the same counter run pricing uses. */
+      step_count?: number;
+      /** @description Journey/audit contract version (shared SemVer; see docs) */
+      contractVersion: string;
+    };
+    JourneyCappedRun: {
+      /** @description Run id - the handle for GET /api/journey/runs/{id} and the stream */
+      id: string;
+      /**
+       * @description Lifecycle status. failed is terminal; a failed run has no result.
+       * @enum {string}
+       */
+      status: "running" | "succeeded" | "failed";
+      /** @description Curated intent id (see GET /api/journey/intents) */
+      intent_id?: string;
+      /** @description Target domain */
+      domain?: string;
+      /** @description The agent configuration that ran (or is running) */
+      agent: {
+        /** @description Agent harness wire name */
+        harness: string;
+        /** @description Model the harness drives */
+        model: string;
+      };
+      started_at: string;
+      finished_at?: string;
+      /** @description SSE stream for this run: run_id -> trajectory -> processing -> result | error */
+      stream_url: string;
+      /**
+       * @description Canonical success verdict, present once the run finished
+       * @enum {string}
+       */
+      verdict?: "satisfied" | "partial" | "unsatisfied" | "not_gradable";
+      /** @description Billable steps the run took (tool calls, excluding narration and filesystem ops), present once the run finished. This is the same counter run pricing uses. */
+      step_count?: number;
+      /** @description Journey/audit contract version (shared SemVer; see docs) */
+      contractVersion: string;
+      /**
+       * @description Marks a per-target-capped response: this is the cached latest run, not a fresh one
+       * @enum {boolean}
+       */
+      rate_limited: true;
+      /** @description The per-target cap that was hit */
+      limit: {
+        /** @description Runs allowed per target per window */
+        max: number;
+        /** @description Window length in ms */
+        window_ms: number;
+      };
+      /** @description Milliseconds until a per-target slot frees */
+      retry_after_ms: number;
+    };
+    JourneyRunDetail: {
+      /** @description Run id - the handle for GET /api/journey/runs/{id} and the stream */
+      id: string;
+      /**
+       * @description Lifecycle status. failed is terminal; a failed run has no result.
+       * @enum {string}
+       */
+      status: "running" | "succeeded" | "failed";
+      /** @description Curated intent id (see GET /api/journey/intents) */
+      intent_id?: string;
+      /** @description Target domain */
+      domain?: string;
+      /** @description The agent configuration that ran (or is running) */
+      agent: {
+        /** @description Agent harness wire name */
+        harness: string;
+        /** @description Model the harness drives */
+        model: string;
+      };
+      started_at: string;
+      finished_at?: string;
+      /** @description SSE stream for this run: run_id -> trajectory -> processing -> result | error */
+      stream_url: string;
+      /**
+       * @description Canonical success verdict, present once the run finished
+       * @enum {string}
+       */
+      verdict?: "satisfied" | "partial" | "unsatisfied" | "not_gradable";
+      /** @description Billable steps the run took (tool calls, excluding narration and filesystem ops), present once the run finished. This is the same counter run pricing uses. */
+      step_count?: number;
+      /** @description Journey/audit contract version (shared SemVer; see docs) */
+      contractVersion: string;
+      /** @description The full run result. Present iff status is 'succeeded'. */
+      result?: {
+        /** @description Run id. Absent on legacy persisted runs. */
+        run_id?: string;
+        /** @description Curated intent id the run executed */
+        intent_id?: string;
+        /** @description Target domain */
+        domain?: string;
+        /** @description Agent harness: claude-agent-sdk | openai-agents | ash */
+        harness?: string;
+        /** @description Model the harness drove */
+        model?: string;
+        started_at?: string;
+        finished_at?: string;
+        /** @description Agent lifecycle outcome. Key 'did it work?' off verdict, not this. */
+        outcome: string;
+        /**
+         * @description Canonical success verdict, judge-authoritative and always resolved (legacy runs included). THE field to key success on.
+         * @enum {string}
+         */
+        verdict: "satisfied" | "partial" | "unsatisfied" | "not_gradable";
+        /** @description The agent's final free-text answer. Experimental: raw model output that can reflect content fetched from the target site - may change or disappear without a major version. */
+        agent_response?: string;
+        /** @description Agent turns the run took */
+        num_turns?: number;
+        /** @description Wall-clock run duration */
+        duration_ms?: number;
+        /** @description Model spend for the run in USD. Experimental: tracks provider accounting and may change or disappear without a major version. */
+        cost_usd?: number;
+        /** @description Total input tokens the run consumed. Experimental. */
+        input_tokens?: number;
+        /** @description Total output tokens the run produced. Experimental. */
+        output_tokens?: number;
+        /** @description Prompt-cache read tokens. Experimental. */
+        cache_read_tokens?: number;
+        /** @description Prompt-cache write tokens. Experimental. */
+        cache_write_tokens?: number;
+        /** @description The full step tree the agent took */
+        trajectory: {
+          /** @description Cumulative step tree, in emission order */
+          steps: ({
+              /** @description Index in steps[] - stable node identifier */
+              id: number;
+              /** @description Agent turn this step belongs to */
+              turn?: number;
+              /**
+               * @description tool_call = an action against the target; text = narrative reasoning between actions
+               * @enum {string}
+               */
+              type: "tool_call" | "text";
+              /** @description Index of the parent step in this same array (tree edge) */
+              parent_id?: number;
+              /** @description Action family: search | fetch | api_call | text | bash_fs | skill */
+              action?: string;
+              /** @description Concrete tool the harness invoked */
+              tool?: string;
+              /** @description Full URL the step targeted, when it targeted one */
+              url?: string;
+              /** @description Host of the targeted URL */
+              url_host?: string;
+              /** @description Path of the targeted URL */
+              url_path?: string;
+              /** @description Query string, on search steps */
+              search_query?: string;
+              /** @description direct = the agent navigated on its own; follow = it followed a link */
+              source?: string;
+              /** @description Relation of the target to the run's domain: exact | subdomain | external */
+              anchor_relation?: string;
+              /** @description Why the agent went here - the navigation-source attribution */
+              attribution?: {
+                /** @description How the agent found this step: prior_knowledge | web_search | previous_artifact | other */
+                kind: string;
+                /** @description Artifact kind this step was attributed to */
+                artifact_kind?: string;
+                /** @description Signal id backing the attribution, when one matched */
+                signal_id?: string;
+                /** @description Attribution method: heuristic | llm */
+                method?: string;
+                /** @description Attribution confidence: strong | weak */
+                confidence?: string;
+                /** @description The referring step, when attributed to a previous artifact */
+                referrer?: {
+                  /** @description Turn index of the referring step */
+                  turn: number;
+                  /** @description Parent step id - the tree edge the trajectory graph renders */
+                  step_id?: number;
+                  /** @description Artifact kind of the referring step (e.g. llms_txt, sitemap) */
+                  artifact_kind?: string;
+                  /** @description URL path of the referring step */
+                  url_path?: string;
+                };
+              };
+              /** @description Key of the artifact this step fetched, when recognised */
+              artifact_key?: string;
+              /** @description HTTP method of a fetch step */
+              fetch_method?: string;
+              /** @description HTTP status the step observed, once resolved */
+              status?: number;
+              /** @description Wall-clock duration of the step */
+              duration_ms?: number;
+              /** @description Engine-provided display label for the node, when present */
+              label?: string;
+              /** @description tool_call steps only: whether the call has resolved. False while the step is still in flight on a live stream. */
+              completed?: boolean;
+              /** @description Name of the invoked skill, on skill steps */
+              skill_name?: string;
+              /** @description text steps only: the narrative the agent emitted between actions. Advisory - raw model prose. */
+              text?: string;
+            })[];
+          /** @description Compact fingerprint of the action sequence */
+          action_sequence: string;
+          /** @description Ids of agent-readiness signals the run observed */
+          signals_observed: string[];
+          /** @description How the run resolved friction, when classified (e.g. succeeded_natively, needs_human_bridge) */
+          friction_outcome?: string;
+          /** @description HTTP status distribution over the run's requests */
+          status_profile?: {
+            count_2xx: number;
+            count_3xx: number;
+            count_4xx: number;
+            count_5xx: number;
+            /** @description Step id of the first 4xx/5xx, when any */
+            first_error_step?: number;
+            /** @description Artifact kind of the first errored step */
+            first_error_kind?: string;
+          };
+          /** @description Which discovery artifacts the agent probed for, and what it found */
+          well_known_probes: ({
+              /** @description Probed artifact (e.g. llms.txt, openapi.json) */
+              artifact: string;
+              signal_id?: string;
+              /** @description root_file | well_known | api_spec */
+              catalog: string;
+              probed: boolean;
+              fetched: boolean;
+              attempt_count: number;
+              first_status?: number;
+              first_step_ord?: number;
+              first_turn_index?: number;
+              /** @description The agent looked for this artifact and it was absent */
+              near_miss: boolean;
+            })[];
+          /** @description How the agent's visited paths were discovered */
+          path_origin_distribution?: {
+            prior_knowledge: number;
+            web_search: number;
+            previous_artifact: number;
+            other: number;
+          };
+          /** @description Share of navigations that followed an on-page link rather than a guess */
+          link_following_rate: number;
+        };
+        /** @description ora's generated read of the run */
+        insight: {
+          /** @description ora's generated one-paragraph read of the run */
+          summary: string;
+          /** @description Bullet observations backing the summary */
+          key_observations: string[];
+          generated_at: string;
+          /** @description The journey layers this intent touched. NOTE: this is the journey taxonomy (5 layers), deliberately distinct from the audit report's 4 scoring layers - never map between the two. */
+          journey_layers?: ("discovery" | "identity" | "access" | "payments" | "experience")[];
+        };
+        /** @description Flat per-run signal summary. Experimental; absent on legacy runs. */
+        run_signals?: {
+          /** @description run_signals contract version (3 = current) */
+          version: number;
+          /** @description Engine-classified intent category */
+          intent_category: string;
+          /** @description high | low */
+          category_confidence: string;
+          /** @description The independent judge's grade: satisfied | partial | unsatisfied */
+          task_satisfied?: string;
+          /** @description Engine-reconciled success verdict; prefer the top-level verdict field, which is always resolved */
+          verdict?: string;
+          /** @description Agent lifecycle outcome. Key 'did it work?' off the top-level verdict, not this. */
+          outcome: string;
+          friction_outcome?: string;
+          bridge_classification?: string;
+          first_action?: string;
+          /** @description Where the agent went first */
+          first_target?: {
+            page_role: string;
+            anchor_relation?: string;
+            source?: string;
+          };
+          /** @description Engine's raw step count. Display step counts use the record's step_count (billable steps) instead. */
+          steps_count: number;
+          search_count: number;
+          /** @description Whether the agent reached the run's domain at all */
+          reached_anchor: boolean;
+          link_following_rate: number;
+          prior_knowledge_ratio: number;
+          signals_observed: string[];
+          /** @description Per page-role reach summary */
+          page_reach: {
+            [key: string]: {
+              reached: boolean;
+              first_turn: number;
+              steps_to: number;
+            };
+          };
+          /** @description Per artifact probe summary */
+          artifacts: {
+            [key: string]: {
+              probed: boolean;
+              fetched: boolean;
+              first_turn?: number;
+            };
+          };
+          /** @description Step ids on the success path, when the run succeeded */
+          success_step_ids: number[];
+          success_route: {
+            artifacts: {
+              [key: string]: string;
+            };
+            page_roles: {
+              [key: string]: string;
+            };
+            closer?: {
+              artifact_key?: string;
+              page_role?: string;
+            };
+          };
+          /** @description Journey-taxonomy layers (5), distinct from the audit report's 4 scoring layers */
+          journey_layers: ("discovery" | "identity" | "access" | "payments" | "experience")[];
+        };
+      };
+    };
+    JourneyRunResult: {
+      /** @description Run id. Absent on legacy persisted runs. */
+      run_id?: string;
+      /** @description Curated intent id the run executed */
+      intent_id?: string;
+      /** @description Target domain */
+      domain?: string;
+      /** @description Agent harness: claude-agent-sdk | openai-agents | ash */
+      harness?: string;
+      /** @description Model the harness drove */
+      model?: string;
+      started_at?: string;
+      finished_at?: string;
+      /** @description Agent lifecycle outcome. Key 'did it work?' off verdict, not this. */
+      outcome: string;
+      /**
+       * @description Canonical success verdict, judge-authoritative and always resolved (legacy runs included). THE field to key success on.
+       * @enum {string}
+       */
+      verdict: "satisfied" | "partial" | "unsatisfied" | "not_gradable";
+      /** @description The agent's final free-text answer. Experimental: raw model output that can reflect content fetched from the target site - may change or disappear without a major version. */
+      agent_response?: string;
+      /** @description Agent turns the run took */
+      num_turns?: number;
+      /** @description Wall-clock run duration */
+      duration_ms?: number;
+      /** @description Model spend for the run in USD. Experimental: tracks provider accounting and may change or disappear without a major version. */
+      cost_usd?: number;
+      /** @description Total input tokens the run consumed. Experimental. */
+      input_tokens?: number;
+      /** @description Total output tokens the run produced. Experimental. */
+      output_tokens?: number;
+      /** @description Prompt-cache read tokens. Experimental. */
+      cache_read_tokens?: number;
+      /** @description Prompt-cache write tokens. Experimental. */
+      cache_write_tokens?: number;
+      /** @description The full step tree the agent took */
+      trajectory: {
+        /** @description Cumulative step tree, in emission order */
+        steps: ({
+            /** @description Index in steps[] - stable node identifier */
+            id: number;
+            /** @description Agent turn this step belongs to */
+            turn?: number;
+            /**
+             * @description tool_call = an action against the target; text = narrative reasoning between actions
+             * @enum {string}
+             */
+            type: "tool_call" | "text";
+            /** @description Index of the parent step in this same array (tree edge) */
+            parent_id?: number;
+            /** @description Action family: search | fetch | api_call | text | bash_fs | skill */
+            action?: string;
+            /** @description Concrete tool the harness invoked */
+            tool?: string;
+            /** @description Full URL the step targeted, when it targeted one */
+            url?: string;
+            /** @description Host of the targeted URL */
+            url_host?: string;
+            /** @description Path of the targeted URL */
+            url_path?: string;
+            /** @description Query string, on search steps */
+            search_query?: string;
+            /** @description direct = the agent navigated on its own; follow = it followed a link */
+            source?: string;
+            /** @description Relation of the target to the run's domain: exact | subdomain | external */
+            anchor_relation?: string;
+            /** @description Why the agent went here - the navigation-source attribution */
+            attribution?: {
+              /** @description How the agent found this step: prior_knowledge | web_search | previous_artifact | other */
+              kind: string;
+              /** @description Artifact kind this step was attributed to */
+              artifact_kind?: string;
+              /** @description Signal id backing the attribution, when one matched */
+              signal_id?: string;
+              /** @description Attribution method: heuristic | llm */
+              method?: string;
+              /** @description Attribution confidence: strong | weak */
+              confidence?: string;
+              /** @description The referring step, when attributed to a previous artifact */
+              referrer?: {
+                /** @description Turn index of the referring step */
+                turn: number;
+                /** @description Parent step id - the tree edge the trajectory graph renders */
+                step_id?: number;
+                /** @description Artifact kind of the referring step (e.g. llms_txt, sitemap) */
+                artifact_kind?: string;
+                /** @description URL path of the referring step */
+                url_path?: string;
+              };
+            };
+            /** @description Key of the artifact this step fetched, when recognised */
+            artifact_key?: string;
+            /** @description HTTP method of a fetch step */
+            fetch_method?: string;
+            /** @description HTTP status the step observed, once resolved */
+            status?: number;
+            /** @description Wall-clock duration of the step */
+            duration_ms?: number;
+            /** @description Engine-provided display label for the node, when present */
+            label?: string;
+            /** @description tool_call steps only: whether the call has resolved. False while the step is still in flight on a live stream. */
+            completed?: boolean;
+            /** @description Name of the invoked skill, on skill steps */
+            skill_name?: string;
+            /** @description text steps only: the narrative the agent emitted between actions. Advisory - raw model prose. */
+            text?: string;
+          })[];
+        /** @description Compact fingerprint of the action sequence */
+        action_sequence: string;
+        /** @description Ids of agent-readiness signals the run observed */
+        signals_observed: string[];
+        /** @description How the run resolved friction, when classified (e.g. succeeded_natively, needs_human_bridge) */
+        friction_outcome?: string;
+        /** @description HTTP status distribution over the run's requests */
+        status_profile?: {
+          count_2xx: number;
+          count_3xx: number;
+          count_4xx: number;
+          count_5xx: number;
+          /** @description Step id of the first 4xx/5xx, when any */
+          first_error_step?: number;
+          /** @description Artifact kind of the first errored step */
+          first_error_kind?: string;
+        };
+        /** @description Which discovery artifacts the agent probed for, and what it found */
+        well_known_probes: ({
+            /** @description Probed artifact (e.g. llms.txt, openapi.json) */
+            artifact: string;
+            signal_id?: string;
+            /** @description root_file | well_known | api_spec */
+            catalog: string;
+            probed: boolean;
+            fetched: boolean;
+            attempt_count: number;
+            first_status?: number;
+            first_step_ord?: number;
+            first_turn_index?: number;
+            /** @description The agent looked for this artifact and it was absent */
+            near_miss: boolean;
+          })[];
+        /** @description How the agent's visited paths were discovered */
+        path_origin_distribution?: {
+          prior_knowledge: number;
+          web_search: number;
+          previous_artifact: number;
+          other: number;
+        };
+        /** @description Share of navigations that followed an on-page link rather than a guess */
+        link_following_rate: number;
+      };
+      /** @description ora's generated read of the run */
+      insight: {
+        /** @description ora's generated one-paragraph read of the run */
+        summary: string;
+        /** @description Bullet observations backing the summary */
+        key_observations: string[];
+        generated_at: string;
+        /** @description The journey layers this intent touched. NOTE: this is the journey taxonomy (5 layers), deliberately distinct from the audit report's 4 scoring layers - never map between the two. */
+        journey_layers?: ("discovery" | "identity" | "access" | "payments" | "experience")[];
+      };
+      /** @description Flat per-run signal summary. Experimental; absent on legacy runs. */
+      run_signals?: {
+        /** @description run_signals contract version (3 = current) */
+        version: number;
+        /** @description Engine-classified intent category */
+        intent_category: string;
+        /** @description high | low */
+        category_confidence: string;
+        /** @description The independent judge's grade: satisfied | partial | unsatisfied */
+        task_satisfied?: string;
+        /** @description Engine-reconciled success verdict; prefer the top-level verdict field, which is always resolved */
+        verdict?: string;
+        /** @description Agent lifecycle outcome. Key 'did it work?' off the top-level verdict, not this. */
+        outcome: string;
+        friction_outcome?: string;
+        bridge_classification?: string;
+        first_action?: string;
+        /** @description Where the agent went first */
+        first_target?: {
+          page_role: string;
+          anchor_relation?: string;
+          source?: string;
+        };
+        /** @description Engine's raw step count. Display step counts use the record's step_count (billable steps) instead. */
+        steps_count: number;
+        search_count: number;
+        /** @description Whether the agent reached the run's domain at all */
+        reached_anchor: boolean;
+        link_following_rate: number;
+        prior_knowledge_ratio: number;
+        signals_observed: string[];
+        /** @description Per page-role reach summary */
+        page_reach: {
+          [key: string]: {
+            reached: boolean;
+            first_turn: number;
+            steps_to: number;
+          };
+        };
+        /** @description Per artifact probe summary */
+        artifacts: {
+          [key: string]: {
+            probed: boolean;
+            fetched: boolean;
+            first_turn?: number;
+          };
+        };
+        /** @description Step ids on the success path, when the run succeeded */
+        success_step_ids: number[];
+        success_route: {
+          artifacts: {
+            [key: string]: string;
+          };
+          page_roles: {
+            [key: string]: string;
+          };
+          closer?: {
+            artifact_key?: string;
+            page_role?: string;
+          };
+        };
+        /** @description Journey-taxonomy layers (5), distinct from the audit report's 4 scoring layers */
+        journey_layers: ("discovery" | "identity" | "access" | "payments" | "experience")[];
+      };
+    };
+    JourneyTrajectoryStep: {
+      /** @description Index in steps[] - stable node identifier */
+      id: number;
+      /** @description Agent turn this step belongs to */
+      turn?: number;
+      /**
+       * @description tool_call = an action against the target; text = narrative reasoning between actions
+       * @enum {string}
+       */
+      type: "tool_call" | "text";
+      /** @description Index of the parent step in this same array (tree edge) */
+      parent_id?: number;
+      /** @description Action family: search | fetch | api_call | text | bash_fs | skill */
+      action?: string;
+      /** @description Concrete tool the harness invoked */
+      tool?: string;
+      /** @description Full URL the step targeted, when it targeted one */
+      url?: string;
+      /** @description Host of the targeted URL */
+      url_host?: string;
+      /** @description Path of the targeted URL */
+      url_path?: string;
+      /** @description Query string, on search steps */
+      search_query?: string;
+      /** @description direct = the agent navigated on its own; follow = it followed a link */
+      source?: string;
+      /** @description Relation of the target to the run's domain: exact | subdomain | external */
+      anchor_relation?: string;
+      /** @description Why the agent went here - the navigation-source attribution */
+      attribution?: {
+        /** @description How the agent found this step: prior_knowledge | web_search | previous_artifact | other */
+        kind: string;
+        /** @description Artifact kind this step was attributed to */
+        artifact_kind?: string;
+        /** @description Signal id backing the attribution, when one matched */
+        signal_id?: string;
+        /** @description Attribution method: heuristic | llm */
+        method?: string;
+        /** @description Attribution confidence: strong | weak */
+        confidence?: string;
+        /** @description The referring step, when attributed to a previous artifact */
+        referrer?: {
+          /** @description Turn index of the referring step */
+          turn: number;
+          /** @description Parent step id - the tree edge the trajectory graph renders */
+          step_id?: number;
+          /** @description Artifact kind of the referring step (e.g. llms_txt, sitemap) */
+          artifact_kind?: string;
+          /** @description URL path of the referring step */
+          url_path?: string;
+        };
+      };
+      /** @description Key of the artifact this step fetched, when recognised */
+      artifact_key?: string;
+      /** @description HTTP method of a fetch step */
+      fetch_method?: string;
+      /** @description HTTP status the step observed, once resolved */
+      status?: number;
+      /** @description Wall-clock duration of the step */
+      duration_ms?: number;
+      /** @description Engine-provided display label for the node, when present */
+      label?: string;
+      /** @description tool_call steps only: whether the call has resolved. False while the step is still in flight on a live stream. */
+      completed?: boolean;
+      /** @description Name of the invoked skill, on skill steps */
+      skill_name?: string;
+      /** @description text steps only: the narrative the agent emitted between actions. Advisory - raw model prose. */
+      text?: string;
     };
     /** @description The default response body of POST /api/scan and GET /api/score/{domain}. Fields not listed below may be present: they are ora internals, are not part of the contract, and may change or disappear in any release without a major version bump. Pass `?format=audit` for the versioned, fully documented shape (AuditScanResult / AuditScoreResult). */
     ScanResult: {
@@ -1425,6 +2095,210 @@ export interface operations {
       /** @description JWKS generation failed */
       500: {
         content: never;
+      };
+    };
+  };
+  /**
+   * Run an agent journey against a domain
+   * @description Triggers a real agent run: an AI agent (harness + model) attempts a curated task (an intent) against the given domain, and ora records the trajectory and derives insights. Two-step flow: this endpoint returns fast with a run record whose `stream_url` serves the live trajectory as Server-Sent Events; poll GET /api/journey/runs/{id} instead if you do not want the stream. Only curated intents run publicly (see GET /api/journey/intents) - the server derives the actual agent prompt from the intent id, so no free-text prompt can reach the engine. Only publicly runnable agents are accepted (see GET /api/journey/agents). Unknown body fields are rejected (strict schema). Rate limited three ways: a 20-per-minute burst cap per IP; a per-target cap of 5 runs per rolling 24h per (domain, intent, harness, model) - when a target is over the cap the response is HTTP 200 with the most recent stored run for that target (`rate_limited: true`) plus Retry-After, the freshness analog: a denied trigger still returns the newest result and consumes nothing; and a durable per-caller cap of 10 runs per rolling 24h per IP - exceeded, that one is a real 429 with `retry_after_ms` (there is no cached result to serve for a caller). Successful and capped responses carry X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Reset headers for the per-target window. Note: journey insights use the 5-layer journey taxonomy (discovery, identity, access, payments, experience), deliberately distinct from the 4 scoring layers of the audit report (POST /api/scan) - never map between the two.
+   */
+  createJourneyRun: {
+    requestBody: {
+      content: {
+        "application/json": {
+          intent: {
+            /**
+             * @description Curated intent to execute (GET /api/journey/intents lists them with labels)
+             * @enum {string}
+             */
+            intent_id: "pricing" | "signup" | "api-docs" | "integrate" | "support" | "evaluate" | "discover-trust" | "agent-access" | "understand-offering" | "find-integration" | "inspect-integration" | "production-readiness" | "authenticate" | "transact" | "act-for-user" | "operate-site";
+            /**
+             * @description Target domain (e.g. stripe.com). Validated like a scan target: IP literals, localhost, and malformed hosts are rejected with code INVALID_DOMAIN.
+             * @example stripe.com
+             */
+            domain?: string;
+          };
+          /**
+           * @description Agent harness wire name. The (harness, model) pair must resolve to a publicly runnable agent from GET /api/journey/agents, else 400 UNSUPPORTED_AGENT.
+           * @enum {string}
+           */
+          harness: "claude-agent-sdk" | "openai-agents" | "ash";
+          /**
+           * @description Model the harness drives (e.g. claude-haiku-4-5)
+           * @example claude-haiku-4-5
+           */
+          model: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Per-target cap hit - the freshness analog, not an error: the body is the most recent stored run for this exact (domain, intent, harness, model) target, marked `rate_limited: true`, so CI and agents get the newest result without spending a run. When the served run has finished, the body also carries `verdict` and `step_count`. Replay it via its `stream_url`. */
+      200: {
+        headers: {
+          /** @description Seconds until the target's oldest in-window run ages out */
+          "Retry-After"?: number;
+          /** @description Per-target window size (5 runs per rolling 24h) */
+          "X-RateLimit-Limit"?: number;
+          /** @description Always 0 on a capped response */
+          "X-RateLimit-Remaining"?: number;
+          /** @description Unix seconds when the next per-target slot frees */
+          "X-RateLimit-Reset"?: number;
+        };
+        content: {
+          "application/json": components["schemas"]["JourneyCappedRun"];
+        };
+      };
+      /** @description Run created and dispatched. Open `stream_url` (SSE) to watch the trajectory live, or poll GET /api/journey/runs/{id}. */
+      201: {
+        headers: {
+          /** @description Per-target window size (5 runs per rolling 24h) */
+          "X-RateLimit-Limit"?: number;
+          /** @description Runs left in this target's window, including this one's consumption */
+          "X-RateLimit-Remaining"?: number;
+          /** @description Unix seconds when the next per-target slot frees. Absent when the window was empty. */
+          "X-RateLimit-Reset"?: number;
+        };
+        content: {
+          "application/json": components["schemas"]["JourneyRun"];
+        };
+      };
+      /** @description Invalid input: schema failure (including unknown body fields - the contract is strict), `code: "INVALID_DOMAIN"` for a domain the scanner would reject, or `code: "UNSUPPORTED_AGENT"` for a (harness, model) pair that is not publicly runnable. */
+      400: {
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Caller limit exceeded - the 20-per-minute burst cap, or the durable per-caller budget (10 runs per rolling 24h per IP; body carries `retry_after_ms`). Per-TARGET saturation is the 200 above, not this. */
+      429: {
+        headers: {
+          /** @description Seconds until next allowed request */
+          "Retry-After"?: number;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description The run engine could not be reached; nothing was created or consumed. */
+      503: {
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  /**
+   * Get a journey run record (non-streaming)
+   * @description Returns the run record by id. While the run executes, `status` is 'running' - open the stream or poll. Once finished and persisted, `status` is 'succeeded' and the body carries `verdict`, `step_count` (billable steps - the same counter run pricing uses), and the full `result` (trajectory + insight + signals). `status` 'failed' is terminal with no result. `result` is present iff status is 'succeeded'.
+   */
+  getJourneyRun: {
+    parameters: {
+      path: {
+        /** @description The run id from POST /api/journey/runs */
+        id: string;
+      };
+    };
+    responses: {
+      /** @description The run record; plus `result` once succeeded. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["JourneyRunDetail"];
+        };
+      };
+      /** @description Unknown run id */
+      404: {
+        content: never;
+      };
+    };
+  };
+  /**
+   * Stream a journey run's trajectory as Server-Sent Events
+   * @description The live trajectory SSE for a run created by POST /api/journey/runs. Event names (stable): `run_id` ({ run_id }), then progressive `trajectory` frames (cumulative snapshots, each a { steps, ... } object of JourneyTrajectoryStep items), optionally `processing` ({ message }) while insights generate, and finally exactly one of `result` (a JourneyRunResult) or `error` ({ message }). Reopening the stream of a finished run replays the stored result instead of re-executing the agent (pass ?replay=1 for paced frames, plus &quick=1 to skip the startup delay); a plain reopen renders the finished journey in one frame. Long-lived: a live run can hold the connection for many minutes (function ceiling 800s). Rate limited 20 per minute per IP.
+   */
+  streamJourneyRun: {
+    parameters: {
+      query?: {
+        /** @description Pass 1 to replay a finished run as paced progressive frames (the animated replay). */
+        replay?: "1";
+        /** @description With replay=1: skip the startup delay. */
+        quick?: "1";
+      };
+      path: {
+        /** @description The run id */
+        id: string;
+      };
+    };
+    responses: {
+      /** @description Server-Sent Events stream: run_id -> trajectory* -> processing? -> result | error. */
+      200: {
+        content: {
+          "text/event-stream": string;
+        };
+      };
+      /** @description Unknown run id */
+      404: {
+        content: never;
+      };
+      /** @description Rate limit exceeded - max 20 requests per minute per IP. */
+      429: {
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  /**
+   * List the curated journey intents
+   * @description The curated tasks a public journey run can execute. Each entry carries the stable `id` (what POST /api/journey/runs takes), a short `label`, a one-line `hint`, and the user-facing `template` phrasing. Cached statically.
+   */
+  listJourneyIntents: {
+    responses: {
+      /** @description Curated intents plus the default id. */
+      200: {
+        content: {
+          "application/json": {
+            intents?: {
+                /** @description Stable intent id */
+                id?: string;
+                /** @description Short picker label */
+                label?: string;
+                /** @description One-line description of the job to be done */
+                hint?: string;
+                /** @description User-facing phrasing of the task */
+                template?: string;
+              }[];
+            defaultId?: string;
+          };
+        };
+      };
+    };
+  };
+  /**
+   * List the publicly runnable journey agents
+   * @description The agents an anonymous POST /api/journey/runs accepts - every listed (harness, model) pair is publicly runnable. Entries carry display metadata (label, variant, brand, blurb) plus the wire fields `harness` and `model`. Cached statically.
+   */
+  listJourneyAgents: {
+    responses: {
+      /** @description Runnable agents plus the default picker id. */
+      200: {
+        content: {
+          "application/json": {
+            agents?: {
+                /** @description Picker id */
+                id?: string;
+                label?: string;
+                variant?: string;
+                brand?: string;
+                /** @description Wire harness for POST /api/journey/runs */
+                harness?: string;
+                /** @description Wire model for POST /api/journey/runs */
+                model?: string;
+                agentLabel?: string;
+                blurb?: string;
+                badge?: string;
+              }[];
+            defaultId?: string;
+          };
+        };
       };
     };
   };

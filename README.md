@@ -83,6 +83,43 @@ ax audit localhost:3000 --tunnel-cmd 'ngrok http 3000 --log stdout'
 - Off-site checks (registry listings, brand search) usually fail for a throwaway tunnel hostname — the report says so. Use tunnel audits to iterate on your on-site surface, not to compare scores.
 - Free tiers of some tunnel vendors serve an interstitial warning page to browser-like requests, which can distort what the scanner sees — prefer a vendor/plan that serves your origin directly.
 
+## deep-journey
+
+```
+ax deep-journey <url> [--intent id] [--agent id] [--no-stream] [--json]
+```
+
+```
+ax deep-journey stripe.com --intent pricing
+```
+
+Runs a real AI agent at a site on a curated task through ora's **public** journey API — no key, no workspace. The agent's trajectory streams live as progress lines; the terminal output is ora's verdict, the billable step count, and the generated insight:
+
+```
+  ✓ task satisfied  stripe.com
+  14 steps · 6 turns · 41.2s
+
+  The agent found the pricing page in two hops via llms.txt and correctly
+  summarised the standard and custom tiers.
+    - llms.txt was load-bearing: it linked /pricing directly
+    - no web search was needed; every path came from on-site links
+
+  For the 4-layer readiness audit, run: ax audit stripe.com
+```
+
+Curated intents only (`pricing`, `signup`, `api-docs`, `get started`, `support`, …) — list them with `GET https://ora.ai/api/journey/intents`, and the accepted agents with `GET https://ora.ai/api/journey/agents`. The public caps are 5 runs per rolling 24h per target and 10 runs per 24h per IP; a target at its cap answers with the most recent stored run (`rate_limited: true`) instead of an error, so repeat CI invocations are cheap. Verdict and step count come from ora's contract as-is — the CLI never re-judges a run.
+
+| Flag | Effect |
+|---|---|
+| `--intent <id>` | Curated task id (server default when omitted) |
+| `--agent <id>` | Agent from the public roster (default: ora's pick) |
+| `--no-stream` | Poll for the result instead of streaming the trajectory |
+| `--json` | Print the terminal run detail (verdict, step_count, result) as JSON |
+
+deep-journey exit codes: `0` run succeeded (any verdict) · `1` run failed · `2` usage error · `3` API unreachable / rate-limited.
+
+This differs from `ax journey` (below), which drives the authenticated platform with free-text goals and renders the full trajectory graph; `deep-journey` is the zero-setup public path.
+
 ## skill
 
 ```
@@ -167,6 +204,23 @@ console.log(result.score, result.grade, result.topFixes);
 
 `result` is the raw versioned audit payload (`AuditScanResult` / `AuditScoreResult`, generated from ora's OpenAPI spec). `fetchSkill` / `fetchSkillIndex` expose the digest-verified skill registry.
 
+The public journey client is exported too — the same no-key path as `ax deep-journey`:
+
+```ts
+import { deepJourney, fetchJourneyAgents } from "@ora-ai/ax";
+
+const { agents, defaultId } = await fetchJourneyAgents();
+const agent = agents.find((a) => a.id === defaultId)!;
+const { detail } = await deepJourney("stripe.com", {
+	intentId: "pricing",
+	harness: agent.harness,
+	model: agent.model,
+});
+console.log(detail.verdict, detail.step_count, detail.result?.insight.summary);
+```
+
+`detail` is the contract's `JourneyRunDetail`; `fetchJourneyIntents` lists the curated intents. The same public caps apply — a capped target resolves with the most recent stored run (`cached: true` on the outcome), not an error.
+
 ## Environment variables
 
 All configuration is environment-first: the consumer defines the variables, the CLI only reads them.
@@ -175,7 +229,7 @@ A `.env` in the working directory is read on startup — copy `.env.example` and
 
 | Var | Used by | Default | Purpose |
 |---|---|---|---|
-| `ORA_API_URL` | audit, skill | `https://ora.ai` | Public API base (no auth) |
+| `ORA_API_URL` | audit, deep-journey, skill | `https://ora.ai` | Public API base (no auth) |
 | `ORA_PLATFORM_URL` | journey | `https://api.agentfront.sh` | Authenticated platform API base |
 | `ORA_API_KEY` | journey | — (required) | Secret key (`ora_sk_…`), exchanged for a short-lived bearer token |
 

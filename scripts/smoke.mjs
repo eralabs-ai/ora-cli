@@ -52,14 +52,15 @@ check("--version matches package.json", () => {
 	}
 });
 
-check("--help exits 0 and lists both commands", () => {
+check("--help exits 0 and lists every command", () => {
 	const help = ax(["--help"]);
-	for (const command of ["audit", "journey"]) {
+	for (const command of ["audit", "deep-journey", "journey", "skill"]) {
 		if (!help.includes(command)) throw new Error(`help omits "${command}"`);
 	}
 });
 
 check("audit --help exits 0", () => ax(["audit", "--help"]));
+check("deep-journey --help exits 0", () => ax(["deep-journey", "--help"]));
 check("journey --help exits 0", () => ax(["journey", "--help"]));
 
 if (failures.length > 0) {

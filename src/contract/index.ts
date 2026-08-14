@@ -11,6 +11,12 @@ export type AuditCheck = components["schemas"]["AuditCheck"];
 export type AuditLayer = components["schemas"]["AuditLayer"];
 export type AuditTopFix = AuditScanResult["topFixes"][number];
 
+export type JourneyRun = components["schemas"]["JourneyRun"];
+export type JourneyCappedRun = components["schemas"]["JourneyCappedRun"];
+export type JourneyRunDetail = components["schemas"]["JourneyRunDetail"];
+export type JourneyRunResult = components["schemas"]["JourneyRunResult"];
+export type JourneyTrajectoryStep = components["schemas"]["JourneyTrajectoryStep"];
+
 export { BUILT_AGAINST };
 
 function minor(version: string): [number, number] {
