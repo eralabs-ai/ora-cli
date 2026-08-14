@@ -2,6 +2,7 @@ import { defineCommand, runMain } from "citty";
 import pc from "picocolors";
 import pkg from "../package.json";
 import { auditCommand } from "./commands/audit";
+import { deepJourneyCommand } from "./commands/deep-journey";
 import { journeyCommand } from "./commands/journey";
 import { skillCommand } from "./commands/skill";
 import { loadLocalEnv } from "./env";
@@ -103,6 +104,49 @@ const journey = defineCommand({
 	},
 });
 
+const deepJourney = defineCommand({
+	meta: {
+		name: "deep-journey",
+		description:
+			"Run a real AI agent at a site on a curated task via ora's public API (no key needed; exit codes: 0 ok, 1 run failed, 2 usage, 3 API error)",
+	},
+	args: {
+		url: {
+			type: "positional",
+			description: "URL or domain the agent targets (e.g. stripe.com)",
+			required: true,
+		},
+		intent: {
+			type: "string",
+			description: "Curated intent id (see GET /api/journey/intents; server default when omitted)",
+		},
+		agent: {
+			type: "string",
+			description: "Agent id from the public roster (see GET /api/journey/agents)",
+		},
+		json: {
+			type: "boolean",
+			description: "Print the terminal run detail as JSON",
+			default: false,
+		},
+		"no-stream": {
+			type: "boolean",
+			description: "Skip the live trajectory stream and poll for the result instead",
+			default: false,
+		},
+	},
+	async run({ args }) {
+		// Same exitCode-over-exit rule as audit: let stdout drain before exiting.
+		process.exitCode = await deepJourneyCommand({
+			url: args.url as string,
+			intent: args.intent as string | undefined,
+			agent: args.agent as string | undefined,
+			json: Boolean(args.json),
+			noStream: Boolean(args["no-stream"]),
+		});
+	},
+});
+
 const skill = defineCommand({
 	meta: {
 		name: "skill",
@@ -145,14 +189,16 @@ function helpScreen(): string {
 		`  ${d("Score any site's agent readiness — and watch real AI agents navigate it")}`,
 		"",
 		`  ${d("Commands:")}`,
-		`    audit ${d("<url>")}       ${d("Score a site's agent readiness")}`,
-		`    journey ${d("<intent>")}  ${d("Send a real agent at a site and watch it live")}`,
-		`    skill ${d("[name]")}      ${d("List, print, or install ora's agent skills")}`,
+		`    audit ${d("<url>")}         ${d("Score a site's agent readiness")}`,
+		`    deep-journey ${d("<url>")}  ${d("Run a real agent at a site on a curated task (no key needed)")}`,
+		`    journey ${d("<intent>")}    ${d("Send a real agent at a site and watch it live (workspace)")}`,
+		`    skill ${d("[name]")}        ${d("List, print, or install ora's agent skills")}`,
 		"",
 		`  ${d("Examples:")}`,
 		`    ${g} ${NAME} audit https://docs.example.com`,
 		`    ${g} ${NAME} audit https://docs.example.com --min-score 70   ${d("# CI gate")}`,
 		`    ${g} ${NAME} audit https://docs.example.com --json`,
+		`    ${g} ${NAME} deep-journey stripe.com --intent pricing`,
 		`    ${g} ${NAME} journey "Find the API docs and how to authenticate" --domain stripe.com`,
 		"",
 		`  ${d("audit options:")}`,
@@ -166,6 +212,13 @@ function helpScreen(): string {
 		"",
 		`  ${d("audit exit codes:")}`,
 		`    ${d("0 success · 1 below --min-score · 2 usage error · 3 API unreachable/rate-limited")}`,
+		"",
+		`  ${d("deep-journey options:")}`,
+		`    --intent <id>    ${d("Curated task id, e.g. pricing, signup, api-docs (server default when omitted)")}`,
+		`    --agent <id>     ${d("Agent from the public roster (default: ora's pick)")}`,
+		`    --no-stream      ${d("Poll for the result instead of streaming the trajectory")}`,
+		`    --json           ${d("Print the terminal run detail as JSON")}`,
+		`    ${d("no key needed · public caps: 5 runs/24h per target, 10 runs/24h per IP")}`,
 		"",
 		`  ${d("journey options:")}`,
 		`    --domain <d>     ${d("Site the agent targets (e.g. stripe.com)")}`,
@@ -183,7 +236,7 @@ const root = defineCommand({
 		version: pkg.version,
 		description: "Score any site's agent readiness — and watch real AI agents navigate it",
 	},
-	subCommands: { audit, journey, skill },
+	subCommands: { audit, "deep-journey": deepJourney, journey, skill },
 	setup() {
 		// Bare invocation and top-level --help get the curated screen; subcommand
 		// --help stays with citty's generated usage.

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuditScanResult } from "../contract";
-import { resetContractWarning } from "../contract";
+import { BUILT_AGAINST, resetContractWarning } from "../contract";
 // Captured from a real `GET /api/scan/stream?domain=example.com&format=audit`
 // terminal event against contract 1.8.0 (2026-08-13). Real shape, not
 // hand-rolled - tests derive variations from it with explicit deltas.
@@ -89,7 +89,10 @@ describe("performAudit", () => {
 
 	it("warns on stderr once when the payload reports a newer contract", async () => {
 		const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-		const [major, minor] = FIXTURE.contractVersion.split(".").map(Number);
+		// Newer than the version this BUILD was generated against - the fixture's
+		// own contractVersion can lag BUILT_AGAINST after a regen, which is fine
+		// (older payloads never warn) but made it the wrong derivation base here.
+		const [major, minor] = BUILT_AGAINST.split(".").map(Number);
 		const newer = `${major}.${minor + 1}.0`;
 		vi.stubGlobal(
 			"fetch",

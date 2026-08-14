@@ -11,6 +11,17 @@ export {
 	performAudit as audit,
 } from "./api/audit";
 export {
+	DeepJourneyApiError,
+	type DeepJourneyOptions,
+	type DeepJourneyOutcome,
+	fetchJourneyAgents,
+	fetchJourneyIntents,
+	type JourneyAgentOption,
+	type JourneyIntentOption,
+	performDeepJourney as deepJourney,
+	type RunAllowance,
+} from "./api/deep-journey";
+export {
 	type FetchedSkill,
 	fetchSkill,
 	fetchSkillIndex,
@@ -25,4 +36,9 @@ export {
 	type AuditTopFix,
 	BUILT_AGAINST,
 	isNewerContract,
+	type JourneyCappedRun,
+	type JourneyRun,
+	type JourneyRunDetail,
+	type JourneyRunResult,
+	type JourneyTrajectoryStep,
 } from "./contract";

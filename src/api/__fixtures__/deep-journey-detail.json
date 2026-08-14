@@ -1,0 +1,455 @@
+{
+	"id": "98cacf5c-4c08-4c21-97df-4f8e3e1f6f19",
+	"status": "succeeded",
+	"intent_id": "signup",
+	"domain": "captest-orank.com",
+	"agent": {
+		"harness": "claude-agent-sdk",
+		"model": "claude-haiku-4-5"
+	},
+	"started_at": "2026-08-14T01:51:54.882Z",
+	"finished_at": "2026-08-14T01:53:40.360Z",
+	"stream_url": "/api/journey/runs/98cacf5c-4c08-4c21-97df-4f8e3e1f6f19/stream",
+	"contractVersion": "1.9.0",
+	"verdict": "unsatisfied",
+	"step_count": 19,
+	"result": {
+		"run_id": "98cacf5c-4c08-4c21-97df-4f8e3e1f6f19",
+		"intent_id": "signup",
+		"domain": "captest-orank.com",
+		"harness": "claude-agent-sdk",
+		"model": "claude-haiku-4-5",
+		"started_at": "2026-08-14T01:51:54.882Z",
+		"finished_at": "2026-08-14T01:53:40.360Z",
+		"outcome": "failure",
+		"verdict": "unsatisfied",
+		"agent_response": "I'll help you access captest-orank.com and look for diagnostic tools or health-check endpoints. Let me start by fetching the main domain.",
+		"num_turns": 10,
+		"duration_ms": 38200,
+		"trajectory": {
+			"steps": [
+				{
+					"id": 0,
+					"type": "text",
+					"text": "I'll help you access stripe.com and look for diagnostic tools or health-check endpoints. Let me start by fetching the main domain."
+				},
+				{
+					"id": 1,
+					"turn": 1,
+					"type": "tool_call",
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "captest-orank.com/",
+					"url_host": "captest-orank.com",
+					"url_path": "/",
+					"source": "direct",
+					"anchor_relation": "exact",
+					"attribution": {
+						"kind": "prior_knowledge",
+						"artifact_kind": "homepage"
+					},
+					"status": 200,
+					"duration_ms": 5234,
+					"completed": true
+				},
+				{
+					"id": 2,
+					"turn": 2,
+					"type": "tool_call",
+					"parent_id": 1,
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "status.captest-orank.com/",
+					"url_host": "status.captest-orank.com",
+					"url_path": "/",
+					"source": "follow",
+					"anchor_relation": "subdomain",
+					"attribution": {
+						"kind": "previous_artifact",
+						"artifact_kind": "homepage",
+						"referrer": {
+							"turn": 1,
+							"artifact_kind": "homepage",
+							"url_path": "/"
+						}
+					},
+					"status": 200,
+					"duration_ms": 2978,
+					"completed": true
+				},
+				{
+					"id": 3,
+					"turn": 2,
+					"type": "tool_call",
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "captest-orank.com/docs/health-check",
+					"url_host": "captest-orank.com",
+					"url_path": "/docs/health-check",
+					"source": "direct",
+					"anchor_relation": "exact",
+					"attribution": {
+						"kind": "prior_knowledge",
+						"artifact_kind": "docs_page",
+						"signal_id": "developer-portal"
+					},
+					"status": 301,
+					"duration_ms": 72,
+					"completed": true
+				},
+				{
+					"id": 4,
+					"turn": 3,
+					"type": "tool_call",
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "captest-orank.com/.well-known/health",
+					"url_host": "captest-orank.com",
+					"url_path": "/.well-known/health",
+					"source": "direct",
+					"anchor_relation": "exact",
+					"attribution": {
+						"kind": "prior_knowledge",
+						"artifact_kind": "well_known"
+					},
+					"status": 404,
+					"duration_ms": 344,
+					"completed": true
+				},
+				{
+					"id": 5,
+					"turn": 4,
+					"type": "tool_call",
+					"parent_id": 3,
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "docs.captest-orank.com/health-check",
+					"url_host": "docs.captest-orank.com",
+					"url_path": "/health-check",
+					"source": "follow",
+					"anchor_relation": "subdomain",
+					"attribution": {
+						"kind": "previous_artifact",
+						"artifact_kind": "docs_page",
+						"signal_id": "developer-portal",
+						"referrer": {
+							"turn": 2,
+							"artifact_kind": "docs_page",
+							"url_path": "/docs/health-check"
+						}
+					},
+					"status": 404,
+					"duration_ms": 495,
+					"completed": true
+				},
+				{
+					"id": 6,
+					"turn": 5,
+					"type": "tool_call",
+					"action": "search",
+					"tool": "WebSearch",
+					"search_query": "captest-orank.com health check endpoint MCP server diagnostic tools",
+					"source": "direct",
+					"attribution": {
+						"kind": "web_search"
+					},
+					"duration_ms": 531,
+					"completed": true
+				},
+				{
+					"id": 7,
+					"turn": 5,
+					"type": "tool_call",
+					"parent_id": 3,
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "captest-orank.com/docs",
+					"url_host": "captest-orank.com",
+					"url_path": "/docs",
+					"source": "follow",
+					"anchor_relation": "exact",
+					"attribution": {
+						"kind": "previous_artifact",
+						"artifact_kind": "docs_page",
+						"signal_id": "developer-portal",
+						"referrer": {
+							"turn": 2,
+							"artifact_kind": "docs_page",
+							"url_path": "/docs/health-check"
+						}
+					},
+					"status": 301,
+					"duration_ms": 74,
+					"completed": true
+				},
+				{
+					"id": 8,
+					"turn": 6,
+					"type": "tool_call",
+					"parent_id": 6,
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "docs.captest-orank.com/mcp",
+					"url_host": "docs.captest-orank.com",
+					"url_path": "/mcp",
+					"source": "follow",
+					"anchor_relation": "subdomain",
+					"attribution": {
+						"kind": "web_search",
+						"artifact_kind": "docs_page",
+						"signal_id": "developer-portal"
+					},
+					"status": 200,
+					"duration_ms": 4636,
+					"completed": true
+				},
+				{
+					"id": 9,
+					"turn": 6,
+					"type": "tool_call",
+					"parent_id": 6,
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "docs.captest-orank.com/health-alerts",
+					"url_host": "docs.captest-orank.com",
+					"url_path": "/health-alerts",
+					"source": "follow",
+					"anchor_relation": "subdomain",
+					"attribution": {
+						"kind": "web_search",
+						"artifact_kind": "docs_page",
+						"signal_id": "developer-portal"
+					},
+					"status": 200,
+					"duration_ms": 5716,
+					"completed": true
+				},
+				{
+					"id": 10,
+					"turn": 7,
+					"type": "tool_call",
+					"parent_id": 8,
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "mcp.captest-orank.com/",
+					"url_host": "mcp.captest-orank.com",
+					"url_path": "/",
+					"source": "follow",
+					"anchor_relation": "subdomain",
+					"attribution": {
+						"kind": "previous_artifact",
+						"artifact_kind": "mcp_server",
+						"signal_id": "mcp-server",
+						"referrer": {
+							"turn": 6,
+							"artifact_kind": "mcp_endpoint_path",
+							"url_path": "/mcp"
+						}
+					},
+					"status": 401,
+					"duration_ms": 697,
+					"completed": true
+				},
+				{
+					"id": 11,
+					"turn": 7,
+					"type": "tool_call",
+					"action": "search",
+					"tool": "WebSearch",
+					"search_query": "Captest-orank MCP server health check endpoint localhost:3000",
+					"source": "direct",
+					"attribution": {
+						"kind": "web_search"
+					},
+					"duration_ms": 516,
+					"completed": true
+				},
+				{
+					"id": 12,
+					"turn": 8,
+					"type": "tool_call",
+					"parent_id": 11,
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "mcpcat.io/guides/building-health-check-endpoint-mcp-server",
+					"url_host": "mcpcat.io",
+					"url_path": "/guides/building-health-check-endpoint-mcp-server",
+					"source": "follow",
+					"anchor_relation": "external",
+					"attribution": {
+						"kind": "web_search"
+					},
+					"status": 200,
+					"duration_ms": 6122,
+					"completed": true
+				},
+				{
+					"id": 13,
+					"turn": 8,
+					"type": "tool_call",
+					"parent_id": 9,
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "docs.captest-orank.com/workbench/health",
+					"url_host": "docs.captest-orank.com",
+					"url_path": "/workbench/health",
+					"source": "follow",
+					"anchor_relation": "subdomain",
+					"attribution": {
+						"kind": "previous_artifact",
+						"artifact_kind": "docs_page",
+						"signal_id": "developer-portal",
+						"referrer": {
+							"turn": 6,
+							"artifact_kind": "docs_page",
+							"url_path": "/health-alerts"
+						}
+					},
+					"status": 200,
+					"duration_ms": 4148,
+					"completed": true
+				},
+				{
+					"id": 14,
+					"turn": 9,
+					"type": "tool_call",
+					"action": "search",
+					"tool": "WebSearch",
+					"search_query": "\"captest-orank mcp server\" \"health check\" OR \"health endpoint\" OR \"diagnostic\"",
+					"source": "direct",
+					"attribution": {
+						"kind": "web_search"
+					},
+					"duration_ms": 927,
+					"completed": true
+				},
+				{
+					"id": 15,
+					"turn": 9,
+					"type": "tool_call",
+					"parent_id": 7,
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "docs.captest-orank.com/",
+					"url_host": "docs.captest-orank.com",
+					"url_path": "/",
+					"source": "follow",
+					"anchor_relation": "subdomain",
+					"attribution": {
+						"kind": "previous_artifact",
+						"artifact_kind": "homepage",
+						"referrer": {
+							"turn": 5,
+							"artifact_kind": "docs_page",
+							"url_path": "/docs"
+						}
+					},
+					"status": 200,
+					"duration_ms": 3297,
+					"completed": true
+				},
+				{
+					"id": 16,
+					"turn": 10,
+					"type": "tool_call",
+					"parent_id": 6,
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "github.com/hideokamoto/stripe-testing-mcp-tools",
+					"url_host": "github.com",
+					"url_path": "/hideokamoto/stripe-testing-mcp-tools",
+					"source": "follow",
+					"anchor_relation": "external",
+					"attribution": {
+						"kind": "web_search"
+					},
+					"status": 200,
+					"duration_ms": 4261,
+					"completed": true
+				},
+				{
+					"id": 17,
+					"turn": 10,
+					"type": "tool_call",
+					"action": "search",
+					"tool": "WebSearch",
+					"search_query": "captest-orank api health check endpoint status",
+					"source": "direct",
+					"attribution": {
+						"kind": "web_search"
+					},
+					"duration_ms": 638,
+					"completed": true
+				},
+				{
+					"id": 18,
+					"turn": 11,
+					"type": "tool_call",
+					"parent_id": 17,
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "api.captest-orank.com/healthcheck",
+					"url_host": "api.captest-orank.com",
+					"url_path": "/healthcheck",
+					"source": "follow",
+					"anchor_relation": "subdomain",
+					"attribution": {
+						"kind": "web_search",
+						"artifact_kind": "docs_page",
+						"signal_id": "developer-portal"
+					},
+					"status": 200,
+					"duration_ms": 2911,
+					"completed": true
+				},
+				{
+					"id": 19,
+					"turn": 11,
+					"type": "tool_call",
+					"parent_id": 6,
+					"action": "fetch",
+					"tool": "WebFetch",
+					"url": "status.captest-orank.com/reachability",
+					"url_host": "status.captest-orank.com",
+					"url_path": "/reachability",
+					"source": "follow",
+					"anchor_relation": "subdomain",
+					"attribution": {
+						"kind": "web_search"
+					},
+					"status": 200,
+					"duration_ms": 2486,
+					"completed": true
+				}
+			],
+			"action_sequence": "fetch,fetch+fetch,fetch,fetch,search+fetch,fetch+fetch,fetch+search,fetch+fetch,search+fetch,fetch+search,fetch+fetch",
+			"signals_observed": ["developer-portal"],
+			"friction_outcome": "timeout",
+			"status_profile": {
+				"count_2xx": 10,
+				"count_3xx": 2,
+				"count_4xx": 3,
+				"count_5xx": 0,
+				"first_error_step": 7,
+				"first_error_kind": "well_known"
+			},
+			"well_known_probes": [],
+			"path_origin_distribution": {
+				"prior_knowledge": 0.2,
+				"web_search": 0.4,
+				"previous_artifact": 0.4,
+				"other": 0
+			},
+			"link_following_rate": 0.4
+		},
+		"insight": {
+			"summary": "The agent probed widely but couldn't complete the task: alongside successful reads it hit several 4xx responses and redirects, and the resource it needed was gated or absent. It exhausted reasonable paths and ended without a confident answer.",
+			"key_observations": [
+				"A cluster of 4xx responses shows the agent tried endpoints that don't exist or require authentication - the target wasn't discoverable from a published hint.",
+				"Redirects (3xx) bounced the agent across canonical URLs, adding navigation cost without resolving the task.",
+				"The failure reflects a real agent-readiness gap for this task: the needed capability isn't exposed in a way a cold-start agent can reach."
+			],
+			"generated_at": "2026-05-30T07:26:26.282Z"
+		}
+	}
+}
