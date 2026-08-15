@@ -51,6 +51,17 @@ export interface AuditOptions {
 	force?: boolean;
 	/** Store the result as disposable (tunnel hosts are auto-classified). */
 	ephemeral?: boolean;
+	/**
+	 * ora-issued scan API key (contract 1.10.0): exempts the caller from every
+	 * scan-family rate limit. Falls back to $ORA_SCAN_API_KEY. Safe to send
+	 * blind — the server degrades an unrecognized key to keyless, never a 401.
+	 */
+	apiKey?: string;
+}
+
+/** Bearer header for the scan API key, or nothing when the caller is keyless. */
+function authHeaders(apiKey: string | undefined): Record<string, string> {
+	return apiKey ? { authorization: `Bearer ${apiKey}` } : {};
 }
 
 /**
@@ -64,6 +75,10 @@ export async function performAudit(
 	options: AuditOptions = {},
 ): Promise<AuditOutcome> {
 	const base = (options.baseUrl ?? process.env.ORA_API_URL ?? PUBLIC_BASE).replace(/\/+$/, "");
+	// Resolve the key once so the stream request and the deep-analysis poll
+	// agree — the poll target is rate limited too, and a keyed scan whose polls
+	// went keyless would throttle exactly the high-volume callers keys exist for.
+	options = { ...options, apiKey: options.apiKey || process.env.ORA_SCAN_API_KEY || undefined };
 	options.progress?.(`Auditing ${target} with ora`);
 
 	const streamed = await consumeScanStream(base, target, options);
@@ -101,7 +116,7 @@ async function consumeScanStream(
 	let res: Response;
 	try {
 		res = await fetch(streamUrl(base, target, options), {
-			headers: { accept: "text/event-stream" },
+			headers: { accept: "text/event-stream", ...authHeaders(options.apiKey) },
 			signal: dog.signal,
 		});
 	} catch (cause) {
@@ -115,7 +130,7 @@ async function consumeScanStream(
 		dog.disarm();
 		const wait = res.headers.get("retry-after");
 		throw new AuditApiError(
-			`ora rate limit exceeded${wait ? ` — retry after ${wait}s` : ""} (burst: 10 scans/min/IP; daily: 30 scans + 6 force per 24h)`,
+			`ora rate limit exceeded${wait ? ` — retry after ${wait}s` : ""} (burst: 10 scans/min/IP; daily: 30 scans + 6 force per 24h). An ora-issued scan API key lifts these limits: set ORA_SCAN_API_KEY or pass --api-key.`,
 		);
 	}
 	if (!res.ok || !res.body) {
@@ -252,7 +267,7 @@ async function awaitDeepAnalysis(
 		await pause(every);
 		try {
 			const res = await fetch(scoreUrl, {
-				headers: { accept: "application/json" },
+				headers: { accept: "application/json", ...authHeaders(options.apiKey) },
 				signal: AbortSignal.timeout(15_000),
 			});
 			if (res.ok) latest = (await res.json()) as AuditScoreResult;

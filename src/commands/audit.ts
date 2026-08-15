@@ -16,6 +16,8 @@ export interface AuditCommandInput {
 	force: boolean;
 	/** User-supplied command that exposes the target and prints a public https URL. */
 	tunnelCmd?: string;
+	/** ora-issued scan API key (--api-key); the client falls back to ORA_SCAN_API_KEY. */
+	apiKey?: string;
 }
 
 /**
@@ -126,6 +128,7 @@ export async function auditCommand(input: AuditCommandInput): Promise<number> {
 			maxAgeSeconds: maxAge.value,
 			force: input.force,
 			ephemeral: useTunnel || undefined,
+			apiKey: input.apiKey?.trim() || undefined,
 		});
 	} catch (cause) {
 		spinner.stop();

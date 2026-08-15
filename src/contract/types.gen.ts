@@ -188,6 +188,10 @@ export interface components {
       tier?: string;
       /** @description Canonical spec / standard URL this check evaluates against, when one exists. Advisory - the link may change on any release. */
       specUrl?: string;
+      /** @description When the check ran against a specific MCP server within a multi-MCP bundle: that server's kind (currently product | docs | other; advisory - new kinds may appear on any release). Absent for non-MCP checks and single-MCP scans. */
+      mcpKind?: string;
+      /** @description The URL of the MCP server this check scored against. Present only alongside mcpKind. */
+      mcpUrl?: string;
       /** @description What the scan observed for this check */
       details?: string;
       /** @description Concrete fix that would make this check pass. The primary thing to act on. */
@@ -222,6 +226,10 @@ export interface components {
           tier?: string;
           /** @description Canonical spec / standard URL this check evaluates against, when one exists. Advisory - the link may change on any release. */
           specUrl?: string;
+          /** @description When the check ran against a specific MCP server within a multi-MCP bundle: that server's kind (currently product | docs | other; advisory - new kinds may appear on any release). Absent for non-MCP checks and single-MCP scans. */
+          mcpKind?: string;
+          /** @description The URL of the MCP server this check scored against. Present only alongside mcpKind. */
+          mcpUrl?: string;
           /** @description What the scan observed for this check */
           details?: string;
           /** @description Concrete fix that would make this check pass. The primary thing to act on. */
@@ -275,6 +283,10 @@ export interface components {
               tier?: string;
               /** @description Canonical spec / standard URL this check evaluates against, when one exists. Advisory - the link may change on any release. */
               specUrl?: string;
+              /** @description When the check ran against a specific MCP server within a multi-MCP bundle: that server's kind (currently product | docs | other; advisory - new kinds may appear on any release). Absent for non-MCP checks and single-MCP scans. */
+              mcpKind?: string;
+              /** @description The URL of the MCP server this check scored against. Present only alongside mcpKind. */
+              mcpUrl?: string;
               /** @description What the scan observed for this check */
               details?: string;
               /** @description Concrete fix that would make this check pass. The primary thing to act on. */
@@ -307,7 +319,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a stable field or check id was removed, renamed, or changed meaning. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.9.0";
+      contractVersion: "1.11.0";
       /**
        * @description Present only when this body is a stored result served by the freshness gate instead of a fresh scan. Absent on a live scan.
        * @enum {boolean}
@@ -325,6 +337,12 @@ export interface components {
        * @enum {string}
        */
       urlKind?: "domain" | "mcp" | "mcp-app" | "ephemeral";
+      /** @description Canonical market category ora classified the domain into (e.g. 'Infrastructure & DevOps'). Advisory; absent when the domain is unclassified. */
+      category?: string;
+      /** @description One-sentence natural-language verdict on the domain's agent-readiness, generated after analysis completes. Advisory; absent on partial results and on older stored results. */
+      agenticSummary?: string;
+      /** @description The URL the scan actually fetched after following redirects. Distinct from `url`, which is the canonical ora.ai deep link for the domain. */
+      finalUrl?: string;
       /** @description Present only when the scan is stuck (partial for over 30 minutes; the worker likely failed) or on the score route's 404 miss - the HTTP request that recovers the score. A plain partial resolves on its own: poll the 202's Location URL instead of re-scanning. */
       nextAction?: {
         /** @enum {string} */
@@ -387,6 +405,10 @@ export interface components {
               tier?: string;
               /** @description Canonical spec / standard URL this check evaluates against, when one exists. Advisory - the link may change on any release. */
               specUrl?: string;
+              /** @description When the check ran against a specific MCP server within a multi-MCP bundle: that server's kind (currently product | docs | other; advisory - new kinds may appear on any release). Absent for non-MCP checks and single-MCP scans. */
+              mcpKind?: string;
+              /** @description The URL of the MCP server this check scored against. Present only alongside mcpKind. */
+              mcpUrl?: string;
               /** @description What the scan observed for this check */
               details?: string;
               /** @description Concrete fix that would make this check pass. The primary thing to act on. */
@@ -419,7 +441,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a stable field or check id was removed, renamed, or changed meaning. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.9.0";
+      contractVersion: "1.11.0";
       /** @description Wall-clock duration of the scan that produced this stored result */
       durationMs: number | null;
       /**
@@ -432,6 +454,12 @@ export interface components {
        * @enum {string}
        */
       urlKind?: "domain" | "mcp" | "mcp-app" | "ephemeral";
+      /** @description Canonical market category ora classified the domain into (e.g. 'Infrastructure & DevOps'). Advisory; absent when the domain is unclassified. */
+      category?: string;
+      /** @description One-sentence natural-language verdict on the domain's agent-readiness, generated after analysis completes. Advisory; absent on partial results and on older stored results. */
+      agenticSummary?: string;
+      /** @description The URL the scan actually fetched after following redirects. Distinct from `url`, which is the canonical ora.ai deep link for the domain. */
+      finalUrl?: string;
       /** @description Present only when the scan is stuck (partial for over 30 minutes; the worker likely failed) or on the score route's 404 miss - the HTTP request that recovers the score. A plain partial resolves on its own: poll the 202's Location URL instead of re-scanning. */
       nextAction?: {
         /** @enum {string} */

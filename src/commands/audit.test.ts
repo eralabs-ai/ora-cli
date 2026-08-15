@@ -95,6 +95,15 @@ describe("auditCommand exit codes", () => {
 		);
 	});
 
+	it("threads --api-key to the client", async () => {
+		resolveWith();
+		await run({ apiKey: "sk_live_abc" });
+		expect(vi.mocked(api.performAudit)).toHaveBeenCalledWith(
+			"example.com",
+			expect.objectContaining({ apiKey: "sk_live_abc" }),
+		);
+	});
+
 	it("skips the gate for an auth-gated MCP result (unscored, not failed)", async () => {
 		resolveWith({ mcpAuthRequired: true, score: 0, grade: "F" });
 		expect(await run({ minScore: "70" })).toBe(EXIT.OK);

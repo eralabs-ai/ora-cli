@@ -189,12 +189,100 @@ describe("performAudit", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
-	it("explains the rate limits on 429", async () => {
+	it("explains the rate limits on 429 and points at the key that lifts them", async () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async () => new Response("{}", { status: 429, headers: { "retry-after": "42" } })),
 		);
 		await expect(performAudit("example.com")).rejects.toThrow(/rate limit.*42s/i);
+		await expect(performAudit("example.com")).rejects.toThrow(/ORA_SCAN_API_KEY/);
+	});
+
+	describe("scan API key", () => {
+		// The key lifts ora's scan rate limits (keyed exemption, contract 1.10.0).
+		// The server tolerates any bearer token — unrecognized degrades to keyless —
+		// so the only client obligation is putting the right key on the right calls.
+		const headersOf = (init?: RequestInit): Record<string, string> =>
+			(init?.headers ?? {}) as Record<string, string>;
+
+		afterEach(() => vi.unstubAllEnvs());
+
+		it("sends the key as a bearer token on the stream request", async () => {
+			const auths: (string | undefined)[] = [];
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async (_url: string | URL, init?: RequestInit) => {
+					auths.push(headersOf(init).authorization);
+					return scanStream([{ type: "scan_complete", result: settled() }]);
+				}),
+			);
+
+			await performAudit("example.com", { apiKey: "sk_live_abc" });
+			expect(auths).toEqual(["Bearer sk_live_abc"]);
+		});
+
+		it("reads the key from ORA_SCAN_API_KEY when no option is given", async () => {
+			vi.stubEnv("ORA_SCAN_API_KEY", "sk_env_key");
+			const auths: (string | undefined)[] = [];
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async (_url: string | URL, init?: RequestInit) => {
+					auths.push(headersOf(init).authorization);
+					return scanStream([{ type: "scan_complete", result: settled() }]);
+				}),
+			);
+
+			await performAudit("example.com");
+			expect(auths).toEqual(["Bearer sk_env_key"]);
+		});
+
+		it("prefers an explicit key over the environment", async () => {
+			vi.stubEnv("ORA_SCAN_API_KEY", "sk_env_key");
+			const auths: (string | undefined)[] = [];
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async (_url: string | URL, init?: RequestInit) => {
+					auths.push(headersOf(init).authorization);
+					return scanStream([{ type: "scan_complete", result: settled() }]);
+				}),
+			);
+
+			await performAudit("example.com", { apiKey: "sk_flag_key" });
+			expect(auths).toEqual(["Bearer sk_flag_key"]);
+		});
+
+		it("sends no authorization header when no key is set", async () => {
+			// An empty env value (unset CI variable expanding to "") counts as absent.
+			vi.stubEnv("ORA_SCAN_API_KEY", "");
+			const auths: (string | undefined)[] = [];
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async (_url: string | URL, init?: RequestInit) => {
+					auths.push(headersOf(init).authorization);
+					return scanStream([{ type: "scan_complete", result: settled() }]);
+				}),
+			);
+
+			await performAudit("example.com");
+			expect(auths).toEqual([undefined]);
+		});
+
+		it("authorizes the deep-analysis poll with the same key", async () => {
+			const halfway = settled({ analysisStatus: "partial", pendingChecks: ["crawl"] });
+			const auths: (string | undefined)[] = [];
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async (_url: string | URL, init?: RequestInit) => {
+					auths.push(headersOf(init).authorization);
+					return auths.length === 1
+						? scanStream([{ type: "scan_complete", result: halfway }])
+						: asJson(settled());
+				}),
+			);
+
+			await performAudit("example.com", { apiKey: "sk_live_abc", pollEveryMs: 0 });
+			expect(auths).toEqual(["Bearer sk_live_abc", "Bearer sk_live_abc"]);
+		});
 	});
 
 	it("surfaces the server's message on a 4xx response", async () => {
