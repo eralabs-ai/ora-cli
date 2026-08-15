@@ -44,6 +44,11 @@ const audit = defineCommand({
 			description:
 				"Command that exposes a local target and prints its public https URL (e.g. 'ngrok http 3000 --log stdout'); also read from ORA_TUNNEL_CMD. The result is stored as ephemeral",
 		},
+		"api-key": {
+			type: "string",
+			description:
+				"ora-issued scan API key that lifts the scan rate limits; also read from ORA_SCAN_API_KEY",
+		},
 		"show-passing": {
 			type: "boolean",
 			description: "List each passing check individually",
@@ -68,6 +73,7 @@ const audit = defineCommand({
 			maxAge: args["max-age"] as string | undefined,
 			force: Boolean(args.force),
 			tunnelCmd: args["tunnel-cmd"] as string | undefined,
+			apiKey: args["api-key"] as string | undefined,
 		});
 	},
 });
@@ -206,6 +212,7 @@ function helpScreen(): string {
 		`    --max-age <s>    ${d("Accept a cached result up to s seconds old (default 6h)")}`,
 		`    --force          ${d("Bypass the cache and rescan (6/day budget)")}`,
 		`    --tunnel-cmd <c> ${d("Expose a local target via your own tunnel command (e.g. 'ngrok http 3000 --log stdout')")}`,
+		`    --api-key <k>    ${d("ora-issued scan API key that lifts the rate limits; also read from ORA_SCAN_API_KEY")}`,
 		`    --json           ${d("Print the raw ora audit payload as JSON")}`,
 		`    --show-passing   ${d("List each passing check (hidden by default)")}`,
 		`    --show-skipped   ${d("List skipped checks (hidden by default)")}`,

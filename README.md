@@ -15,7 +15,7 @@ Three commands:
 ## audit
 
 ```
-ax audit <url> [--min-score n] [--max-age s] [--force] [--tunnel-cmd c] [--json] [--show-passing] [--show-skipped]
+ax audit <url> [--min-score n] [--max-age s] [--force] [--tunnel-cmd c] [--api-key k] [--json] [--show-passing] [--show-skipped]
 ```
 
 ```
@@ -46,6 +46,7 @@ ax audit <url> [--min-score n] [--max-age s] [--force] [--tunnel-cmd c] [--json]
 | `--max-age <s>` | Accept a cached result up to `s` seconds old (server default 6h, clamped to 1-24h) |
 | `--force` | Bypass the cache and rescan — spends the stricter 6/day force budget |
 | `--tunnel-cmd <c>` | Expose a local target through your own tunnel command and audit the public URL it prints (also read from `ORA_TUNNEL_CMD`) |
+| `--api-key <k>` | ora-issued scan API key — lifts every scan rate limit (also read from `ORA_SCAN_API_KEY`) |
 | `--json` | The raw ora audit payload on stdout, exactly as the API served it |
 | `--show-passing` | List every passing check, not just the per-layer summary bar |
 | `--show-skipped` | Include not-applicable/pending checks with their reason |
@@ -68,7 +69,7 @@ Exit codes are the contract:
 | `2` | usage error — bad flags, malformed URL, local target without a tunnel |
 | `3` | API unreachable, timeout, or rate limit exhausted |
 
-Budget notes: ora allows 30 scans + 6 `--force` scans per rolling 24h per IP (plus a 10/min burst limit). Results served from the freshness cache cost nothing, so a CI job that audits on every push stays well inside the budget — tune the window with `--max-age`, and reserve `--force` for verifying a fix you just deployed. An auth-gated MCP target reports `mcpAuthRequired` and scores 0 as "could not evaluate"; `--min-score` deliberately skips the gate rather than failing on it.
+Budget notes: ora allows 30 scans + 6 `--force` scans per rolling 24h per IP (plus a 10/min burst limit). Results served from the freshness cache cost nothing, so a CI job that audits on every push stays well inside the budget — tune the window with `--max-age`, and reserve `--force` for verifying a fix you just deployed. High-volume callers can present an ora-issued scan API key (`--api-key` or `ORA_SCAN_API_KEY`), which exempts them from all of these limits; keys are issued manually by ora (no self-serve signup), and an unrecognized key silently falls back to the keyless limits rather than erroring. An auth-gated MCP target reports `mcpAuthRequired` and scores 0 as "could not evaluate"; `--min-score` deliberately skips the gate rather than failing on it.
 
 ### Auditing localhost (`--tunnel-cmd`)
 
@@ -232,6 +233,7 @@ A `.env` in the working directory is read on startup — copy `.env.example` and
 | `ORA_API_URL` | audit, deep-journey, skill | `https://ora.ai` | Public API base (no auth) |
 | `ORA_PLATFORM_URL` | journey | `https://api.agentfront.sh` | Authenticated platform API base |
 | `ORA_API_KEY` | journey | — (required) | Secret key (`ora_sk_…`), exchanged for a short-lived bearer token |
+| `ORA_SCAN_API_KEY` | audit | — (optional) | ora-issued scan API key; lifts every scan rate limit (issued manually by ora) |
 
 ## Contract versioning
 
