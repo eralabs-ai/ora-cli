@@ -1,6 +1,6 @@
 {
 	"name": "@ora-ai/ax",
-	"version": "0.4.0",
+	"version": "0.5.0",
 	"description": "Score any site's agent readiness and watch real AI agents navigate it — powered by ora",
 	"type": "module",
 	"packageManager": "pnpm@10.34.5",
