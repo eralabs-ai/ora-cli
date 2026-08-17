@@ -17,14 +17,20 @@ import { spinner } from "../ui/spinner";
 
 export const EXIT = { OK: 0, RUN_FAILED: 1, USAGE: 2, API: 3 } as const;
 
-// The documented public caps, shown up front so a CI author can budget runs
-// before spending one. The live remaining allowance comes from the response
-// headers after the trigger.
-const CAPS_LINE = "public caps: 5 runs/24h per target · 10 runs/24h per IP";
+// The documented caps, shown up front so a CI author can budget runs before
+// spending one. The live remaining allowance comes from the response headers
+// after the trigger. One line per tier - which one the caller is on is known
+// locally (key present or not).
+const CAPS_LINE = "public caps: 100 runs/24h per target · 200 runs/24h per IP";
+const KEYED_CAPS_LINE = "keyed caps: 1000 runs/24h per key · no per-target cap";
 
 export interface DeepJourneyCommandInput {
 	url: string;
 	intent?: string;
+	/** Free-text task (keyed tier); mutually exclusive with `intent`. */
+	task?: string;
+	/** Partner API key (--api-key); falls back to $ORA_PARTNER_API_KEY, then $ORA_SCAN_API_KEY. */
+	apiKey?: string;
 	agent?: string;
 	json: boolean;
 	noStream: boolean;
@@ -97,21 +103,47 @@ export async function deepJourneyCommand(input: DeepJourneyCommandInput): Promis
 
 	const interactive = !input.json && process.stderr.isTTY;
 
+	// Tier resolution, before any network call: the two intent arms are
+	// mutually exclusive, and a free-text task without a key would only 401
+	// server-side - fail fast with the fix instead of spending a request.
+	const task = input.task?.trim() || undefined;
+	const apiKey =
+		input.apiKey || process.env.ORA_PARTNER_API_KEY || process.env.ORA_SCAN_API_KEY || undefined;
+	if (task && input.intent !== undefined) {
+		console.error(
+			"ax deep-journey: --task and --intent are mutually exclusive — a free-text task replaces the curated intent",
+		);
+		return EXIT.USAGE;
+	}
+	if (task && !apiKey) {
+		console.error(
+			"ax deep-journey: --task needs an ora partner API key — set ORA_PARTNER_API_KEY or pass --api-key (keys are issued by ora on request)",
+		);
+		return EXIT.USAGE;
+	}
+
 	// Resolve the intent and agent against the live rosters (both static,
-	// cached routes) so a typo fails with the menu instead of a bare 400.
+	// cached routes) so a typo fails with the menu instead of a bare 400. A
+	// free-text task skips the intent roster entirely - the server takes the
+	// text as-is (anchored to the target) instead of a template id.
 	let intentId = input.intent;
 	let agent: JourneyAgentOption;
 	try {
-		const [intents, agents] = await Promise.all([fetchJourneyIntents(), fetchJourneyAgents()]);
-		if (intentId === undefined) {
-			intentId = intents.defaultId;
-		} else if (!intents.intents.some((option) => option.id === intentId)) {
-			console.error(
-				`ax deep-journey: unknown intent "${intentId}". Available intents:\n${intents.intents
-					.map((option) => `  ${option.id.padEnd(12)} ${option.hint}`)
-					.join("\n")}`,
-			);
-			return EXIT.USAGE;
+		const [intents, agents] = await Promise.all([
+			task ? undefined : fetchJourneyIntents(),
+			fetchJourneyAgents(),
+		]);
+		if (intents) {
+			if (intentId === undefined) {
+				intentId = intents.defaultId;
+			} else if (!intents.intents.some((option) => option.id === intentId)) {
+				console.error(
+					`ax deep-journey: unknown intent "${intentId}". Available intents:\n${intents.intents
+						.map((option) => `  ${option.id.padEnd(12)} ${option.hint}`)
+						.join("\n")}`,
+				);
+				return EXIT.USAGE;
+			}
 		}
 		const wantedAgent = input.agent ?? agents.defaultId;
 		const found = agents.agents.find((option) => option.id === wantedAgent);
@@ -129,14 +161,18 @@ export async function deepJourneyCommand(input: DeepJourneyCommandInput): Promis
 	}
 
 	if (!input.json) {
-		console.error(pc.dim(CAPS_LINE));
+		console.error(pc.dim(apiKey ? KEYED_CAPS_LINE : CAPS_LINE));
 	}
-	if (interactive) spinner.start(`Sending ${agentLine(agent)} to ${target} (${intentId})`);
+	if (interactive) {
+		spinner.start(`Sending ${agentLine(agent)} to ${target} (${task ? `"${task}"` : intentId})`);
+	}
 
 	let outcome: DeepJourneyOutcome;
 	try {
 		outcome = await performDeepJourney(target, {
-			intentId,
+			intentId: task ? undefined : intentId,
+			task,
+			apiKey,
 			harness: agent.harness,
 			model: agent.model,
 			noStream: input.noStream,

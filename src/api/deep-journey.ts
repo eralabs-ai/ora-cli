@@ -10,8 +10,10 @@ import { errorBodyText, pause, watchdog } from "./shared";
 
 // Client for ora's public deep-journey API (/api/journey/*): a real AI agent
 // attempts a curated task against a domain while ora records the trajectory.
-// Unauthenticated by design (same posture as audit.ts) - the public surface is
-// rate-limited per target and per caller, not keyed.
+// Anonymous by default (same posture as audit.ts) - the public surface is
+// rate-limited per target and per caller. A partner API key (optional)
+// unlocks the keyed tier: free-text tasks and a per-key allowance instead of
+// the per-IP one.
 //
 // Thin client: every field (verdict, step_count, insight, trajectory) comes
 // from the versioned journey contract as-is; nothing here re-derives judgement.
@@ -56,6 +58,21 @@ export interface RunAllowance {
 export interface DeepJourneyOptions {
 	/** Curated intent id; the server default when omitted. */
 	intentId?: string;
+	/**
+	 * Free-text task (the keyed custom arm, 4-300 chars server-side). Needs a
+	 * partner API key; mutually exclusive with `intentId` (the command layer
+	 * enforces the exclusivity, this client just sends whichever arm is set).
+	 */
+	task?: string;
+	/**
+	 * ora-issued partner API key, sent as `Authorization: Bearer`. Unlocks
+	 * free-text tasks and moves the caller to the 1000/24h per-key allowance
+	 * (no per-target cap, no burst guard). Falls back to $ORA_PARTNER_API_KEY,
+	 * then $ORA_SCAN_API_KEY (the shared partner registry serves both
+	 * surfaces). Safe to send a wrong key with a curated intent - the server
+	 * silently degrades to the keyless tier.
+	 */
+	apiKey?: string;
 	harness: string;
 	model: string;
 	/** Receives one-line progress updates while the run streams/polls. */
@@ -143,11 +160,16 @@ async function triggerRun(
 	target: string,
 	options: DeepJourneyOptions,
 ): Promise<TriggeredRun> {
+	// The custom arm ({custom, domain}) and the curated arm ({intent_id?,
+	// domain}) are mutually exclusive server-side (strict union); whichever the
+	// caller set is the one sent.
 	const body: Record<string, unknown> = {
-		intent: {
-			...(options.intentId ? { intent_id: options.intentId } : {}),
-			domain: target,
-		},
+		intent: options.task
+			? { custom: options.task, domain: target }
+			: {
+					...(options.intentId ? { intent_id: options.intentId } : {}),
+					domain: target,
+				},
 		harness: options.harness,
 		model: options.model,
 	};
@@ -156,7 +178,11 @@ async function triggerRun(
 	try {
 		res = await fetch(`${base}/api/journey/runs`, {
 			method: "POST",
-			headers: { "content-type": "application/json", accept: "application/json" },
+			headers: {
+				"content-type": "application/json",
+				accept: "application/json",
+				...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}),
+			},
 			body: JSON.stringify(body),
 			signal: AbortSignal.timeout(30_000),
 		});
@@ -165,10 +191,20 @@ async function triggerRun(
 		throw new DeepJourneyApiError(`ora journey request failed: ${detail}`);
 	}
 
+	if (res.status === 401) {
+		// The capability 401: free text needs a recognized partner key. (A
+		// curated body never 401s - a bad key silently degrades to keyless.)
+		throw new DeepJourneyApiError(
+			"free-text tasks need an ora partner API key — set ORA_PARTNER_API_KEY or pass --api-key (keys are issued by ora on request)",
+		);
+	}
 	if (res.status === 429) {
 		const wait = res.headers.get("retry-after");
+		const caps = options.apiKey
+			? "keyed allowance: 1000 runs per 24h per key"
+			: "burst: 20/min/IP; daily: 200 runs per 24h per IP — an ora partner API key raises this to 1000/24h per key: set ORA_PARTNER_API_KEY or pass --api-key";
 		throw new DeepJourneyApiError(
-			`ora journey caller limit exceeded${wait ? ` — retry after ${formatWait(Number(wait) * 1000)}` : ""} (burst: 20/min/IP; daily: 10 runs per 24h per IP)`,
+			`ora journey caller limit exceeded${wait ? ` — retry after ${formatWait(Number(wait) * 1000)}` : ""} (${caps})`,
 		);
 	}
 	if (res.status === 503) {
@@ -336,6 +372,15 @@ export async function performDeepJourney(
 	options: DeepJourneyOptions,
 ): Promise<DeepJourneyOutcome> {
 	const base = apiBase(options.baseUrl);
+	// `||` not `??`: an empty --api-key should fall through to the env chain.
+	options = {
+		...options,
+		apiKey:
+			options.apiKey ||
+			process.env.ORA_PARTNER_API_KEY ||
+			process.env.ORA_SCAN_API_KEY ||
+			undefined,
+	};
 
 	const triggered = await triggerRun(base, target, options);
 	const { record } = triggered;
@@ -348,12 +393,22 @@ export async function performDeepJourney(
 	// live streaming attaches to it the same way a fresh run does.
 	let engineError: string | undefined;
 	if (!options.noStream && record.status === "running") {
-		const streamed = await followJourneyStream(base, record.stream_url, options);
-		// A terminal `error` frame means the run failed - NOT a client failure.
-		// Fall through to the detail so a failed run resolves the same way it
-		// does under --no-stream (status "failed" -> the caller's run-failed
-		// path), keeping exit codes consistent across both modes.
-		engineError = streamed.errorMessage;
+		try {
+			const streamed = await followJourneyStream(base, record.stream_url, options);
+			// A terminal `error` frame means the run failed - NOT a client failure.
+			// Fall through to the detail so a failed run resolves the same way it
+			// does under --no-stream (status "failed" -> the caller's run-failed
+			// path), keeping exit codes consistent across both modes.
+			engineError = streamed.errorMessage;
+		} catch {
+			// The stream is a live view, not the run: a quiet or broken SSE (idle
+			// timeout, transport reset) must never abandon a run that is still
+			// executing - and still billing - server-side. Degrade to polling the
+			// detail; if the run really is stuck, the still-running guard below
+			// reports it after the poll budget.
+			options.progress?.("stream went quiet — switching to polling");
+			await awaitByPolling(base, record.id, options);
+		}
 	} else if (options.noStream && record.status === "running") {
 		await awaitByPolling(base, record.id, options);
 	}
