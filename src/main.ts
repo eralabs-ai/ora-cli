@@ -114,7 +114,7 @@ const deepJourney = defineCommand({
 	meta: {
 		name: "deep-journey",
 		description:
-			"Run a real AI agent at a site on a curated task via ora's public API (no key needed; exit codes: 0 ok, 1 run failed, 2 usage, 3 API error)",
+			"Run a real AI agent at a site on a curated task — or, with a partner API key, a free-text one — via ora's public API (exit codes: 0 ok, 1 run failed, 2 usage, 3 API error)",
 	},
 	args: {
 		url: {
@@ -135,6 +135,16 @@ const deepJourney = defineCommand({
 			description: "Print the terminal run detail as JSON",
 			default: false,
 		},
+		task: {
+			type: "string",
+			description:
+				"Free-text task for the agent (needs a partner API key; mutually exclusive with --intent)",
+		},
+		"api-key": {
+			type: "string",
+			description:
+				"ora-issued partner API key: unlocks --task and the 1000/24h keyed allowance; also read from ORA_PARTNER_API_KEY",
+		},
 		"no-stream": {
 			type: "boolean",
 			description: "Skip the live trajectory stream and poll for the result instead",
@@ -146,6 +156,8 @@ const deepJourney = defineCommand({
 		process.exitCode = await deepJourneyCommand({
 			url: args.url as string,
 			intent: args.intent as string | undefined,
+			task: args.task as string | undefined,
+			apiKey: args["api-key"] as string | undefined,
 			agent: args.agent as string | undefined,
 			json: Boolean(args.json),
 			noStream: Boolean(args["no-stream"]),
@@ -196,7 +208,7 @@ function helpScreen(): string {
 		"",
 		`  ${d("Commands:")}`,
 		`    audit ${d("<url>")}         ${d("Score a site's agent readiness")}`,
-		`    deep-journey ${d("<url>")}  ${d("Run a real agent at a site on a curated task (no key needed)")}`,
+		`    deep-journey ${d("<url>")}  ${d("Run a real agent at a site on a curated or free-text task")}`,
 		`    journey ${d("<intent>")}    ${d("Send a real agent at a site and watch it live (workspace)")}`,
 		`    skill ${d("[name]")}        ${d("List, print, or install ora's agent skills")}`,
 		"",
@@ -222,10 +234,12 @@ function helpScreen(): string {
 		"",
 		`  ${d("deep-journey options:")}`,
 		`    --intent <id>    ${d("Curated task id, e.g. pricing, signup, api-docs (server default when omitted)")}`,
+		`    --task <text>    ${d("Free-text task (needs a partner API key; replaces --intent)")}`,
+		`    --api-key <k>    ${d("ora partner API key: unlocks --task + 1000 runs/24h; also read from ORA_PARTNER_API_KEY")}`,
 		`    --agent <id>     ${d("Agent from the public roster (default: ora's pick)")}`,
 		`    --no-stream      ${d("Poll for the result instead of streaming the trajectory")}`,
 		`    --json           ${d("Print the terminal run detail as JSON")}`,
-		`    ${d("no key needed · public caps: 5 runs/24h per target, 10 runs/24h per IP")}`,
+		`    ${d("no key needed · public caps: 100 runs/24h per target, 200 runs/24h per IP")}`,
 		"",
 		`  ${d("journey options:")}`,
 		`    --domain <d>     ${d("Site the agent targets (e.g. stripe.com)")}`,

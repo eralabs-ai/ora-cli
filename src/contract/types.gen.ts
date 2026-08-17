@@ -6,6 +6,11 @@
  */
 
 
+/** OneOf type helpers */
+type Without<T, U> = { [P in Exclude<keyof T, keyof U>]?: never };
+type XOR<T, U> = (T | U) extends object ? (Without<T, U> & U) | (Without<U, T> & T) : T | U;
+type OneOf<T extends any[]> = T extends [infer Only] ? Only : T extends [infer A, infer B, ...infer Rest] ? OneOf<[XOR<A, B>, ...Rest]> : never;
+
 export interface paths {
   "/api/scan": {
     /**
@@ -41,6 +46,13 @@ export interface paths {
      * @description Returns an SVG badge showing the domain's ora score and grade. Embed in READMEs or websites. Cached for 1 hour.
      */
     get: operations["getBadge"];
+  };
+  "/api/checks": {
+    /**
+     * Get the complete catalog of scanner checks
+     * @description Returns every check the ora scanner can run - stable id, scored layer, max score, applicability, eligible scan kinds, tier, maturity, and fix guidance per check, plus the four scored layers with their weights. Check ids are stable: gate CI on an explicit id list, not on tiers (the required set can grow on a minor version). The document is static and byte-stable between check-set changes, so diffing it detects catalog updates. No parameters. Sends Access-Control-Allow-Origin: * and is CDN-cached for 1 hour. Rate limited to 60 requests per minute per IP - returns 429 with a Retry-After header if exceeded.
+     */
+    get: operations["listChecks"];
   };
   "/api/discover": {
     /**
@@ -122,7 +134,7 @@ export interface paths {
   "/api/journey/runs": {
     /**
      * Run an agent journey against a domain
-     * @description Triggers a real agent run: an AI agent (harness + model) attempts a curated task (an intent) against the given domain, and ora records the trajectory and derives insights. Two-step flow: this endpoint returns fast with a run record whose `stream_url` serves the live trajectory as Server-Sent Events; poll GET /api/journey/runs/{id} instead if you do not want the stream. Only curated intents run publicly (see GET /api/journey/intents) - the server derives the actual agent prompt from the intent id, so no free-text prompt can reach the engine. Only publicly runnable agents are accepted (see GET /api/journey/agents). Unknown body fields are rejected (strict schema). Rate limited three ways: a 20-per-minute burst cap per IP; a per-target cap of 5 runs per rolling 24h per (domain, intent, harness, model) - when a target is over the cap the response is HTTP 200 with the most recent stored run for that target (`rate_limited: true`) plus Retry-After, the freshness analog: a denied trigger still returns the newest result and consumes nothing; and a durable per-caller cap of 10 runs per rolling 24h per IP - exceeded, that one is a real 429 with `retry_after_ms` (there is no cached result to serve for a caller). Successful and capped responses carry X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Reset headers for the per-target window. Note: journey insights use the 5-layer journey taxonomy (discovery, identity, access, payments, experience), deliberately distinct from the 4 scoring layers of the audit report (POST /api/scan) - never map between the two.
+     * @description Triggers a real agent run: an AI agent (harness + model) attempts a task (an intent) against the given domain, and ora records the trajectory and derives insights. Two-step flow: this endpoint returns fast with a run record whose `stream_url` serves the live trajectory as Server-Sent Events; poll GET /api/journey/runs/{id} instead if you do not want the stream. Two caller tiers. Anonymous: curated intents only (see GET /api/journey/intents) - the server derives the actual agent prompt from the intent id, so no free-text prompt can reach the engine. Keyed: a caller presenting an ora-issued partner API key ('Authorization: Bearer <key>', issued manually - contact ora) may instead send bounded free text (`intent.custom`, 4 to 300 characters, with `intent.domain` required), which the server anchors to the requested domain before dispatch and echoes back on the 201. Free text without a recognized key is a 401 with code CUSTOM_INTENT_REQUIRES_KEY; a curated body with a missing or unrecognized key is never an error and simply runs on the anonymous tier. The keyed free-text tier is also reachable from the ora CLI (ax deep-journey --task, v0.5+). Only publicly runnable agents are accepted (see GET /api/journey/agents). Unknown body fields are rejected (strict schema). Anonymous rate limits, three ways: a 20-per-minute burst cap per IP; a per-target cap of 100 runs per rolling 24h per (domain, intent, harness, model) - when a target is over the cap the response is HTTP 200 with the most recent stored run for that target (`rate_limited: true`) plus Retry-After, the freshness analog: a denied trigger still returns the newest result and consumes nothing; and a durable per-caller cap of 200 runs per rolling 24h per IP - exceeded, that one is a real 429 with `retry_after_ms` (there is no cached result to serve for a caller). Keyed rate limit, one way: 1000 runs per rolling 24h per key, exhaustion being the same 429 with `retry_after_ms`. A keyed caller skips both the burst cap and the per-target cap - free text fragments the target key, so a per-target window over it could never fill. Successful and capped responses carry X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Reset headers describing exactly one window: the per-target window on an anonymous response, the per-key caller window on a keyed one. Note: journey insights use the 5-layer journey taxonomy (discovery, identity, access, payments, experience), deliberately distinct from the 4 scoring layers of the audit report (POST /api/scan) - never map between the two.
      */
     post: operations["createJourneyRun"];
   };
@@ -296,7 +308,7 @@ export interface components {
             })[];
         })[];
       /** @description Actionable (fail/warning) checks ranked by ora: non-bonus first, then estimated uplift descending, capped at 6. Render verbatim - do not re-rank. */
-      topFixes: {
+      topFixes: ({
           /** @description Check id of the fix (stable) - matches a check in layers */
           id: string;
           /** @description Id of the layer the check belongs to */
@@ -309,7 +321,11 @@ export interface components {
           bonus: boolean;
           /** @description Concrete fix that would make this check pass */
           recommendation?: string;
-        }[];
+          /** @description When the check ran against a specific MCP server within a multi-MCP bundle: that server's kind (currently product | docs | other; advisory - new kinds may appear on any release). Absent for non-MCP checks and single-MCP scans. */
+          mcpKind?: string;
+          /** @description The URL of the MCP server this check scored against. Present only alongside mcpKind. */
+          mcpUrl?: string;
+        })[];
       /** @description Canonical ora.ai deep link for the domain */
       url: string;
       generatedAt: string;
@@ -319,7 +335,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a stable field or check id was removed, renamed, or changed meaning. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.11.0";
+      contractVersion: "1.15.0";
       /**
        * @description Present only when this body is a stored result served by the freshness gate instead of a fresh scan. Absent on a live scan.
        * @enum {boolean}
@@ -418,7 +434,7 @@ export interface components {
             })[];
         })[];
       /** @description Actionable (fail/warning) checks ranked by ora: non-bonus first, then estimated uplift descending, capped at 6. Render verbatim - do not re-rank. */
-      topFixes: {
+      topFixes: ({
           /** @description Check id of the fix (stable) - matches a check in layers */
           id: string;
           /** @description Id of the layer the check belongs to */
@@ -431,7 +447,11 @@ export interface components {
           bonus: boolean;
           /** @description Concrete fix that would make this check pass */
           recommendation?: string;
-        }[];
+          /** @description When the check ran against a specific MCP server within a multi-MCP bundle: that server's kind (currently product | docs | other; advisory - new kinds may appear on any release). Absent for non-MCP checks and single-MCP scans. */
+          mcpKind?: string;
+          /** @description The URL of the MCP server this check scored against. Present only alongside mcpKind. */
+          mcpUrl?: string;
+        })[];
       /** @description Canonical ora.ai deep link for the domain */
       url: string;
       generatedAt: string;
@@ -441,7 +461,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a stable field or check id was removed, renamed, or changed meaning. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.11.0";
+      contractVersion: "1.15.0";
       /** @description Wall-clock duration of the scan that produced this stored result */
       durationMs: number | null;
       /**
@@ -479,6 +499,92 @@ export interface components {
         [key: string]: unknown;
       } | null;
     };
+    /** @description The complete catalog of scanner checks. Stability classes: every field's shape and presence rule is stable within a major version; check and layer ids are identity, so removing, renaming, or changing the meaning of one is a major version change; every other value (scores, weights, layer assignments, applicability, tiers, maturity, prose) is advisory and may change on a minor version, with score-relevant changes recorded in the contract changelog. Gate CI on an explicit list of check ids. */
+    CheckCatalog: {
+      /**
+       * @description The contract version this catalog conforms to - identical to the OpenAPI info.version and the MCP server version. SemVer: a major means a stable field or a check or layer id was removed, renamed, or changed meaning. The full versioning policy is published in the API description at /api/openapi.json.
+       * @enum {string}
+       */
+      contractVersion: "1.15.0";
+      /** @description The four scored layers in scoring order, with display name and current weight. */
+      layers: {
+          /** @description Stable layer id: discovery, accessibility, usability, or payments. Removing or renaming a layer id is a major version change. Note one intentional divergence: the id 'accessibility' carries the display name 'Access'. */
+          id: string;
+          /** @description Display name for the layer. Advisory: it may change on a minor version. */
+          name: string;
+          /** @description The layer's weight in the overall 0-100 score. Weights sum to 100 across the four layers. Advisory: a rebalance lands on a minor version with a changelog entry. */
+          weight: number;
+        }[];
+      /** @description All catalogued checks. Array order is not contractual: key by id. */
+      checks: ({
+          /** @description Stable check identifier, safe to persist and to gate CI on. Removing, renaming, or changing the meaning of an id is a major version change. */
+          id: string;
+          /** @description Human-readable check title. Advisory display prose. */
+          name: string;
+          /** @description What the check verifies and why it matters to agents. Advisory display prose. */
+          description: string;
+          /** @description The check's scored layer id, always one of the ids in layers[]. A check can move to a different layer on a minor version with a changelog entry. */
+          layer: string;
+          /** @description The check's maximum contribution to its layer. Do not sum maxScore into a score denominator: emerging checks sit outside scoring, a bonus counts only the points it earned (it can raise a score, never lower it), and N/A results drop out. Rebalances land on a minor version with a changelog entry. */
+          maxScore: number;
+          /** @description Always present. A bonus check can only add score: a site that lacks the surface is never penalised for failing it. */
+          bonus: boolean;
+          /** @description The check's declared applicability rule. One of: all | domain-only | mcp | mcp-app | api. A value change lands on a minor version with a changelog entry. */
+          applicability: string;
+          /** @description Present only when applicability is 'api'. One of: rest | graphql | either - the API surface the check evaluates. */
+          protocol?: string;
+          /** @description The scan kinds this check can run for - a subset of: domain | mcp | mcp-app. Eligibility, not a guarantee: MCP checks run once per MCP surface detected on the target and report N/A when none is present, and 'api' checks report N/A when the target has no REST or GraphQL surface. */
+          appliesTo: string[];
+          /** @description One of: required | recommended | emerging. Advisory: the required set may grow on a minor version, and every tier change carries a changelog entry. Gate CI on explicit check ids, not on tiers. */
+          tier: string;
+          /** @description One of: verified | emerging. Emerging checks are shown on score pages but excluded from scoring, so do not treat them as score-affecting when selecting checks. */
+          maturity: string;
+          /** @description Always present. True when the check's underlying spec is a draft or emerging standard. */
+          draft: boolean;
+          /** @description Canonical spec or standard URL. Omitted when the check has none. */
+          specUrl?: string;
+          /** @description Generic, target-independent fix guidance. Omitted for the few checks that have none. */
+          recommendation?: string;
+        })[];
+    };
+    CatalogCheck: {
+      /** @description Stable check identifier, safe to persist and to gate CI on. Removing, renaming, or changing the meaning of an id is a major version change. */
+      id: string;
+      /** @description Human-readable check title. Advisory display prose. */
+      name: string;
+      /** @description What the check verifies and why it matters to agents. Advisory display prose. */
+      description: string;
+      /** @description The check's scored layer id, always one of the ids in layers[]. A check can move to a different layer on a minor version with a changelog entry. */
+      layer: string;
+      /** @description The check's maximum contribution to its layer. Do not sum maxScore into a score denominator: emerging checks sit outside scoring, a bonus counts only the points it earned (it can raise a score, never lower it), and N/A results drop out. Rebalances land on a minor version with a changelog entry. */
+      maxScore: number;
+      /** @description Always present. A bonus check can only add score: a site that lacks the surface is never penalised for failing it. */
+      bonus: boolean;
+      /** @description The check's declared applicability rule. One of: all | domain-only | mcp | mcp-app | api. A value change lands on a minor version with a changelog entry. */
+      applicability: string;
+      /** @description Present only when applicability is 'api'. One of: rest | graphql | either - the API surface the check evaluates. */
+      protocol?: string;
+      /** @description The scan kinds this check can run for - a subset of: domain | mcp | mcp-app. Eligibility, not a guarantee: MCP checks run once per MCP surface detected on the target and report N/A when none is present, and 'api' checks report N/A when the target has no REST or GraphQL surface. */
+      appliesTo: string[];
+      /** @description One of: required | recommended | emerging. Advisory: the required set may grow on a minor version, and every tier change carries a changelog entry. Gate CI on explicit check ids, not on tiers. */
+      tier: string;
+      /** @description One of: verified | emerging. Emerging checks are shown on score pages but excluded from scoring, so do not treat them as score-affecting when selecting checks. */
+      maturity: string;
+      /** @description Always present. True when the check's underlying spec is a draft or emerging standard. */
+      draft: boolean;
+      /** @description Canonical spec or standard URL. Omitted when the check has none. */
+      specUrl?: string;
+      /** @description Generic, target-independent fix guidance. Omitted for the few checks that have none. */
+      recommendation?: string;
+    };
+    CatalogLayer: {
+      /** @description Stable layer id: discovery, accessibility, usability, or payments. Removing or renaming a layer id is a major version change. Note one intentional divergence: the id 'accessibility' carries the display name 'Access'. */
+      id: string;
+      /** @description Display name for the layer. Advisory: it may change on a minor version. */
+      name: string;
+      /** @description The layer's weight in the overall 0-100 score. Weights sum to 100 across the four layers. Advisory: a rebalance lands on a minor version with a changelog entry. */
+      weight: number;
+    };
     JourneyRun: {
       /** @description Run id - the handle for GET /api/journey/runs/{id} and the stream */
       id: string;
@@ -511,6 +617,41 @@ export interface components {
       step_count?: number;
       /** @description Journey/audit contract version (shared SemVer; see docs) */
       contractVersion: string;
+    };
+    JourneyCreatedRun: {
+      /** @description Run id - the handle for GET /api/journey/runs/{id} and the stream */
+      id: string;
+      /**
+       * @description Lifecycle status. failed is terminal; a failed run has no result.
+       * @enum {string}
+       */
+      status: "running" | "succeeded" | "failed";
+      /** @description Curated intent id (see GET /api/journey/intents) */
+      intent_id?: string;
+      /** @description Target domain */
+      domain?: string;
+      /** @description The agent configuration that ran (or is running) */
+      agent: {
+        /** @description Agent harness wire name */
+        harness: string;
+        /** @description Model the harness drives */
+        model: string;
+      };
+      started_at: string;
+      finished_at?: string;
+      /** @description SSE stream for this run: run_id -> trajectory -> processing -> result | error */
+      stream_url: string;
+      /**
+       * @description Canonical success verdict, present once the run finished
+       * @enum {string}
+       */
+      verdict?: "satisfied" | "partial" | "unsatisfied" | "not_gradable";
+      /** @description Billable steps the run took (tool calls, excluding narration and filesystem ops), present once the run finished. This is the same counter run pricing uses. */
+      step_count?: number;
+      /** @description Journey/audit contract version (shared SemVer; see docs) */
+      contractVersion: string;
+      /** @description Echo of the custom intent text the caller sent on this request. Create-response-only: it is never returned by GET /api/journey/runs/{id} or the capped 200, and it is absent on curated runs. Experimental: may change or disappear without a major version. */
+      intent?: string;
     };
     JourneyCappedRun: {
       /** @description Run id - the handle for GET /api/journey/runs/{id} and the stream */
@@ -628,8 +769,8 @@ export interface components {
         cache_read_tokens?: number;
         /** @description Prompt-cache write tokens. Experimental. */
         cache_write_tokens?: number;
-        /** @description The full step tree the agent took */
-        trajectory: {
+        /** @description The full step tree the agent took. Absent on legacy persisted runs. */
+        trajectory?: {
           /** @description Cumulative step tree, in emission order */
           steps: ({
               /** @description Index in steps[] - stable node identifier */
@@ -743,8 +884,8 @@ export interface components {
           /** @description Share of navigations that followed an on-page link rather than a guess */
           link_following_rate: number;
         };
-        /** @description ora's generated read of the run */
-        insight: {
+        /** @description ora's generated read of the run. Absent on legacy persisted runs. */
+        insight?: {
           /** @description ora's generated one-paragraph read of the run */
           summary: string;
           /** @description Bullet observations backing the summary */
@@ -814,8 +955,8 @@ export interface components {
               page_role?: string;
             };
           };
-          /** @description Journey-taxonomy layers (5), distinct from the audit report's 4 scoring layers */
-          journey_layers: ("discovery" | "identity" | "access" | "payments" | "experience")[];
+          /** @description Journey-taxonomy layers (5), distinct from the audit report's 4 scoring layers. Falls back to insight.journey_layers on v1/v2 signals; absent when the run was never classified. */
+          journey_layers?: ("discovery" | "identity" | "access" | "payments" | "experience")[];
         };
       };
     };
@@ -855,8 +996,8 @@ export interface components {
       cache_read_tokens?: number;
       /** @description Prompt-cache write tokens. Experimental. */
       cache_write_tokens?: number;
-      /** @description The full step tree the agent took */
-      trajectory: {
+      /** @description The full step tree the agent took. Absent on legacy persisted runs. */
+      trajectory?: {
         /** @description Cumulative step tree, in emission order */
         steps: ({
             /** @description Index in steps[] - stable node identifier */
@@ -970,8 +1111,8 @@ export interface components {
         /** @description Share of navigations that followed an on-page link rather than a guess */
         link_following_rate: number;
       };
-      /** @description ora's generated read of the run */
-      insight: {
+      /** @description ora's generated read of the run. Absent on legacy persisted runs. */
+      insight?: {
         /** @description ora's generated one-paragraph read of the run */
         summary: string;
         /** @description Bullet observations backing the summary */
@@ -1041,8 +1182,8 @@ export interface components {
             page_role?: string;
           };
         };
-        /** @description Journey-taxonomy layers (5), distinct from the audit report's 4 scoring layers */
-        journey_layers: ("discovery" | "identity" | "access" | "payments" | "experience")[];
+        /** @description Journey-taxonomy layers (5), distinct from the audit report's 4 scoring layers. Falls back to insight.journey_layers on v1/v2 signals; absent when the run was never classified. */
+        journey_layers?: ("discovery" | "identity" | "access" | "payments" | "experience")[];
       };
     };
     JourneyTrajectoryStep: {
@@ -1727,6 +1868,30 @@ export interface operations {
     };
   };
   /**
+   * Get the complete catalog of scanner checks
+   * @description Returns every check the ora scanner can run - stable id, scored layer, max score, applicability, eligible scan kinds, tier, maturity, and fix guidance per check, plus the four scored layers with their weights. Check ids are stable: gate CI on an explicit id list, not on tiers (the required set can grow on a minor version). The document is static and byte-stable between check-set changes, so diffing it detects catalog updates. No parameters. Sends Access-Control-Allow-Origin: * and is CDN-cached for 1 hour. Rate limited to 60 requests per minute per IP - returns 429 with a Retry-After header if exceeded.
+   */
+  listChecks: {
+    responses: {
+      /** @description The complete check catalog */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CheckCatalog"];
+        };
+      };
+      /** @description RATE_LIMIT_EXCEEDED - max 60 requests per minute per IP. */
+      429: {
+        headers: {
+          /** @description Seconds until next allowed request */
+          "Retry-After"?: number;
+        };
+        content: {
+          "application/json": components["schemas"]["ArdErrorResponse"];
+        };
+      };
+    };
+  };
+  /**
    * Discover agent-ready products by intent
    * @description Find the most agent-ready products for a given need. Describe what you're looking for and get products ranked by agent-readiness score. Cached for 5 minutes.
    */
@@ -2128,13 +2293,14 @@ export interface operations {
   };
   /**
    * Run an agent journey against a domain
-   * @description Triggers a real agent run: an AI agent (harness + model) attempts a curated task (an intent) against the given domain, and ora records the trajectory and derives insights. Two-step flow: this endpoint returns fast with a run record whose `stream_url` serves the live trajectory as Server-Sent Events; poll GET /api/journey/runs/{id} instead if you do not want the stream. Only curated intents run publicly (see GET /api/journey/intents) - the server derives the actual agent prompt from the intent id, so no free-text prompt can reach the engine. Only publicly runnable agents are accepted (see GET /api/journey/agents). Unknown body fields are rejected (strict schema). Rate limited three ways: a 20-per-minute burst cap per IP; a per-target cap of 5 runs per rolling 24h per (domain, intent, harness, model) - when a target is over the cap the response is HTTP 200 with the most recent stored run for that target (`rate_limited: true`) plus Retry-After, the freshness analog: a denied trigger still returns the newest result and consumes nothing; and a durable per-caller cap of 10 runs per rolling 24h per IP - exceeded, that one is a real 429 with `retry_after_ms` (there is no cached result to serve for a caller). Successful and capped responses carry X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Reset headers for the per-target window. Note: journey insights use the 5-layer journey taxonomy (discovery, identity, access, payments, experience), deliberately distinct from the 4 scoring layers of the audit report (POST /api/scan) - never map between the two.
+   * @description Triggers a real agent run: an AI agent (harness + model) attempts a task (an intent) against the given domain, and ora records the trajectory and derives insights. Two-step flow: this endpoint returns fast with a run record whose `stream_url` serves the live trajectory as Server-Sent Events; poll GET /api/journey/runs/{id} instead if you do not want the stream. Two caller tiers. Anonymous: curated intents only (see GET /api/journey/intents) - the server derives the actual agent prompt from the intent id, so no free-text prompt can reach the engine. Keyed: a caller presenting an ora-issued partner API key ('Authorization: Bearer <key>', issued manually - contact ora) may instead send bounded free text (`intent.custom`, 4 to 300 characters, with `intent.domain` required), which the server anchors to the requested domain before dispatch and echoes back on the 201. Free text without a recognized key is a 401 with code CUSTOM_INTENT_REQUIRES_KEY; a curated body with a missing or unrecognized key is never an error and simply runs on the anonymous tier. The keyed free-text tier is also reachable from the ora CLI (ax deep-journey --task, v0.5+). Only publicly runnable agents are accepted (see GET /api/journey/agents). Unknown body fields are rejected (strict schema). Anonymous rate limits, three ways: a 20-per-minute burst cap per IP; a per-target cap of 100 runs per rolling 24h per (domain, intent, harness, model) - when a target is over the cap the response is HTTP 200 with the most recent stored run for that target (`rate_limited: true`) plus Retry-After, the freshness analog: a denied trigger still returns the newest result and consumes nothing; and a durable per-caller cap of 200 runs per rolling 24h per IP - exceeded, that one is a real 429 with `retry_after_ms` (there is no cached result to serve for a caller). Keyed rate limit, one way: 1000 runs per rolling 24h per key, exhaustion being the same 429 with `retry_after_ms`. A keyed caller skips both the burst cap and the per-target cap - free text fragments the target key, so a per-target window over it could never fill. Successful and capped responses carry X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Reset headers describing exactly one window: the per-target window on an anonymous response, the per-key caller window on a keyed one. Note: journey insights use the 5-layer journey taxonomy (discovery, identity, access, payments, experience), deliberately distinct from the 4 scoring layers of the audit report (POST /api/scan) - never map between the two.
    */
   createJourneyRun: {
     requestBody: {
       content: {
         "application/json": {
-          intent: {
+          /** @description The task to run, as exactly one of two arms. Curated: an `intent_id` the server owns a prompt template for, open to every caller. Custom: bounded free text, accepted only from a caller presenting a partner API key. A body carrying both arms, or neither, is a 400. */
+          intent: OneOf<[{
             /**
              * @description Curated intent to execute (GET /api/journey/intents lists them with labels)
              * @enum {string}
@@ -2145,7 +2311,18 @@ export interface operations {
              * @example stripe.com
              */
             domain?: string;
-          };
+          }, {
+            /**
+             * @description Free-text task for the agent, 4 to 300 characters measured after trimming. REQUIRES an ora-issued partner API key on the request ('Authorization: Bearer <key>'): sent without one, this arm is a 401 with code CUSTOM_INTENT_REQUIRES_KEY, so do not post free text keylessly - use the curated arm instead. The server anchors the text to `domain` before dispatch (that anchored prompt is what runs and what is stored); the 201 echoes back the text you sent, not the anchored form.
+             * @example Sign up for a free account and deploy a sample project
+             */
+            custom: string;
+            /**
+             * @description Target domain (e.g. stripe.com). Required on this arm (it is optional on the curated one) because free text is domain-agnostic and the server anchors the prompt to this target. Validated like a scan target: IP literals, localhost, and malformed hosts are rejected with code INVALID_DOMAIN.
+             * @example stripe.com
+             */
+            domain: string;
+          }]>;
           /**
            * @description Agent harness wire name. The (harness, model) pair must resolve to a publicly runnable agent from GET /api/journey/agents, else 400 UNSUPPORTED_AGENT.
            * @enum {string}
@@ -2160,12 +2337,12 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Per-target cap hit - the freshness analog, not an error: the body is the most recent stored run for this exact (domain, intent, harness, model) target, marked `rate_limited: true`, so CI and agents get the newest result without spending a run. When the served run has finished, the body also carries `verdict` and `step_count`. Replay it via its `stream_url`. */
+      /** @description Per-target cap hit - the freshness analog, not an error: the body is the most recent stored run for this exact (domain, intent, harness, model) target, marked `rate_limited: true`, so CI and agents get the newest result without spending a run. When the served run has finished, the body also carries `verdict` and `step_count`. Replay it via its `stream_url`. Anonymous tier only: a keyed caller skips the per-target cap and never receives this response. */
       200: {
         headers: {
           /** @description Seconds until the target's oldest in-window run ages out */
           "Retry-After"?: number;
-          /** @description Per-target window size (5 runs per rolling 24h) */
+          /** @description Per-target window size (100 runs per rolling 24h) */
           "X-RateLimit-Limit"?: number;
           /** @description Always 0 on a capped response */
           "X-RateLimit-Remaining"?: number;
@@ -2176,27 +2353,33 @@ export interface operations {
           "application/json": components["schemas"]["JourneyCappedRun"];
         };
       };
-      /** @description Run created and dispatched. Open `stream_url` (SSE) to watch the trajectory live, or poll GET /api/journey/runs/{id}. */
+      /** @description Run created and dispatched. Open `stream_url` (SSE) to watch the trajectory live, or poll GET /api/journey/runs/{id}. A keyed custom run gets its own free text back as `intent` here - the create response is the only place any intent text is published, so GET /api/journey/runs/{id} and the capped 200 never carry it, and a curated run has no `intent` at all. */
       201: {
         headers: {
-          /** @description Per-target window size (5 runs per rolling 24h) */
+          /** @description Size of the one window this response describes: the per-target window (100 runs per rolling 24h) for an anonymous caller, the per-key caller window (1000 runs per rolling 24h) for a keyed one */
           "X-RateLimit-Limit"?: number;
-          /** @description Runs left in this target's window, including this one's consumption */
+          /** @description Runs left in that same window, including this one's consumption */
           "X-RateLimit-Remaining"?: number;
-          /** @description Unix seconds when the next per-target slot frees. Absent when the window was empty. */
+          /** @description Unix seconds when the next slot in that same window frees. Absent when the window was empty. */
           "X-RateLimit-Reset"?: number;
         };
         content: {
-          "application/json": components["schemas"]["JourneyRun"];
+          "application/json": components["schemas"]["JourneyCreatedRun"];
         };
       };
-      /** @description Invalid input: schema failure (including unknown body fields - the contract is strict), `code: "INVALID_DOMAIN"` for a domain the scanner would reject, or `code: "UNSUPPORTED_AGENT"` for a (harness, model) pair that is not publicly runnable. */
+      /** @description Invalid input: schema failure (including unknown body fields - the contract is strict, and a body matching neither intent arm or both of them lands here), `code: "INVALID_DOMAIN"` for a domain the scanner would reject, or `code: "UNSUPPORTED_AGENT"` for a (harness, model) pair that is not publicly runnable. */
       400: {
         content: {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      /** @description Caller limit exceeded - the 20-per-minute burst cap, or the durable per-caller budget (10 runs per rolling 24h per IP; body carries `retry_after_ms`). Per-TARGET saturation is the 200 above, not this. */
+      /** @description `code: "CUSTOM_INTENT_REQUIRES_KEY"` - the request sent a custom free-text intent without a recognized ora-issued partner API key. An absent, malformed, and unrecognized key all land here alike, so the status never doubles as a key-validity oracle. Two ways forward: run a curated intent instead (GET /api/journey/intents lists them, and that arm needs no key), or ask ora for a partner key - they are issued manually on request, so contact us at the address in this document's info.contact. */
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Caller limit exceeded - the 20-per-minute burst cap (anonymous callers only; a keyed caller skips it), or the durable per-caller budget (10 runs per rolling 24h per IP anonymous, 1000 per rolling 24h per key; body carries `retry_after_ms`). Per-TARGET saturation is the 200 above, not this. */
       429: {
         headers: {
           /** @description Seconds until next allowed request */

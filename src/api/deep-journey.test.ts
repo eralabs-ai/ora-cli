@@ -222,6 +222,131 @@ describe("performDeepJourney", () => {
 	});
 });
 
+describe("performDeepJourney - keyed tier", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.unstubAllEnvs();
+	});
+
+	const succeededMock = () =>
+		journeyMock({
+			trigger: asJson({ ...RECORD, status: "succeeded" }, 201, {
+				"x-ratelimit-limit": "1000",
+				"x-ratelimit-remaining": "999",
+			}),
+		});
+
+	const triggerInit = (mock: ReturnType<typeof vi.fn>) => {
+		const call = mock.mock.calls.find(
+			([url, init]) =>
+				String(url).endsWith("/api/journey/runs") &&
+				(init as { method?: string } | undefined)?.method === "POST",
+		);
+		return call?.[1] as { headers: Record<string, string>; body: string };
+	};
+
+	it("sends the partner key as a bearer token on the trigger POST", async () => {
+		const mock = succeededMock();
+		vi.stubGlobal("fetch", mock);
+
+		await performDeepJourney("vercel.com", { ...OPTIONS, apiKey: "pk_live_demo_0123456789" });
+		expect(triggerInit(mock).headers.authorization).toBe("Bearer pk_live_demo_0123456789");
+	});
+
+	it("sends no authorization header without a key", async () => {
+		// Blank out any ambient keys so this asserts the true keyless path.
+		vi.stubEnv("ORA_PARTNER_API_KEY", "");
+		vi.stubEnv("ORA_SCAN_API_KEY", "");
+		const mock = succeededMock();
+		vi.stubGlobal("fetch", mock);
+
+		await performDeepJourney("vercel.com", OPTIONS);
+		expect(triggerInit(mock).headers.authorization).toBeUndefined();
+	});
+
+	it("reads the key from ORA_PARTNER_API_KEY when no explicit option is given", async () => {
+		vi.stubEnv("ORA_PARTNER_API_KEY", "pk_live_from_env_0123456789");
+		const mock = succeededMock();
+		vi.stubGlobal("fetch", mock);
+
+		await performDeepJourney("vercel.com", OPTIONS);
+		expect(triggerInit(mock).headers.authorization).toBe("Bearer pk_live_from_env_0123456789");
+	});
+
+	it("runs a free-text task through the custom intent arm", async () => {
+		const mock = succeededMock();
+		vi.stubGlobal("fetch", mock);
+
+		await performDeepJourney("vercel.com", {
+			...OPTIONS,
+			intentId: undefined,
+			task: "Find how to export a project to GitHub",
+			apiKey: "pk_live_demo_0123456789",
+		});
+
+		const body = JSON.parse(triggerInit(mock).body) as { intent: Record<string, unknown> };
+		expect(body.intent).toEqual({
+			custom: "Find how to export a project to GitHub",
+			domain: "vercel.com",
+		});
+	});
+
+	it("maps the custom-intent 401 to an actionable partner-key error", async () => {
+		vi.stubGlobal(
+			"fetch",
+			journeyMock({
+				trigger: asJson(
+					{ error: "Custom intents require a partner API key", code: "CUSTOM_INTENT_REQUIRES_KEY" },
+					401,
+				),
+			}),
+		);
+
+		await expect(
+			performDeepJourney("vercel.com", { ...OPTIONS, intentId: undefined, task: "Find the docs" }),
+		).rejects.toThrow(/ORA_PARTNER_API_KEY|--api-key/);
+	});
+
+	it("falls back to polling when the stream goes quiet instead of abandoning the run", async () => {
+		// The stream opens but never emits a frame (yesterday's production failure
+		// mode); the run itself keeps executing server-side. The client must
+		// switch to polling the detail rather than throwing away a paid run.
+		const hangingStream = (signal: AbortSignal | undefined): Response =>
+			new Response(
+				new ReadableStream({
+					start(controller) {
+						signal?.addEventListener("abort", () =>
+							controller.error(Object.assign(new Error("aborted"), { name: "AbortError" })),
+						);
+					},
+				}),
+				{ status: 200, headers: { "content-type": "text/event-stream" } },
+			);
+
+		const inner = journeyMock({
+			details: [{ ...(realDetail as object), status: "running", result: undefined }, realDetail],
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string | URL, init?: { method?: string; signal?: AbortSignal }) => {
+				if (String(url).includes("/stream")) return hangingStream(init?.signal);
+				return inner(url, init);
+			}),
+		);
+
+		const lines: string[] = [];
+		const outcome = await performDeepJourney("vercel.com", {
+			...OPTIONS,
+			idleMs: 50,
+			pollEveryMs: 1,
+			progress: (line) => lines.push(line),
+		});
+
+		expect(outcome.detail.status).toBe("succeeded");
+		expect(lines.some((line) => /polling/.test(line))).toBe(true);
+	});
+});
+
 describe("fetchJourneyAgents", () => {
 	afterEach(() => vi.unstubAllGlobals());
 
