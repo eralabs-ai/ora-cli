@@ -33,6 +33,13 @@ export interface paths {
      */
     get: operations["scanDomainStream"];
   };
+  "/api/scan/checks": {
+    /**
+     * Run a selected subset of checks against a URL
+     * @description Runs only the checks you select against the given URL and returns per-check results - the re-verify step after shipping a fix, with check ids from GET /api/checks. The run always executes; results are never served from a cache, so a re-check reflects the fix you just deployed (allow for DNS and CDN caches clearing). For most or all of the catalog, use POST /api/scan instead: same budget unit, and it returns a score. The response carries no aggregate score; GET /api/score/{domain} is the score surface. Callers holding a scan API key also get stored-scan patching - see storedScanUpdated on the response. Rate limited two ways: 10 requests per minute per IP, and one run spends one unit of the daily scan budget shared with POST /api/scan, spent once the target has been probed and classified; requests rejected earlier (invalid input, unknown ids, unreachable) spend nothing. Scan API key callers are exempt from both - an exemption, not a larger allowance; keys are issued manually on request - contact ora.
+     */
+    post: operations["runChecks"];
+  };
   "/api/score/{domain}": {
     /**
      * Get cached score for a domain
@@ -50,7 +57,7 @@ export interface paths {
   "/api/checks": {
     /**
      * Get the complete catalog of scanner checks
-     * @description Returns every check the ora scanner can run - stable id, scored layer, max score, applicability, eligible scan kinds, tier, maturity, and fix guidance per check, plus the four scored layers with their weights. Check ids are stable: gate CI on an explicit id list, not on tiers (the required set can grow on a minor version). The document is static and byte-stable between check-set changes, so diffing it detects catalog updates. No parameters. Sends Access-Control-Allow-Origin: * and is CDN-cached for 1 hour. Rate limited to 60 requests per minute per IP - returns 429 with a Retry-After header if exceeded.
+     * @description Returns every check the ora scanner can run - stable id, scored layer, max score, applicability, eligible scan kinds, tier, maturity, and fix guidance per check, plus the four scored layers with their weights. Check ids are stable: gate CI on an explicit id list, not on tiers (the required set can grow on a minor version). Ids are also what POST /api/scan/checks takes, and every check carries a `beta` boolean for building check pickers - a beta check runs but cannot affect any score. The document is static and byte-stable between check-set changes, so diffing it detects catalog updates. No parameters. Sends Access-Control-Allow-Origin: * and is CDN-cached for 1 hour. Rate limited to 60 requests per minute per IP - returns 429 with a Retry-After header if exceeded.
      */
     get: operations["listChecks"];
   };
@@ -144,6 +151,13 @@ export interface paths {
      * @description Returns the run record by id. While the run executes, `status` is 'running' - open the stream or poll. Once finished and persisted, `status` is 'succeeded' and the body carries `verdict`, `step_count` (billable steps - the same counter run pricing uses), and the full `result` (trajectory + insight + signals). `status` 'failed' is terminal with no result. `result` is present iff status is 'succeeded'.
      */
     get: operations["getJourneyRun"];
+  };
+  "/api/journey/domains/{host}": {
+    /**
+     * Get or create a domain's agent journey
+     * @description Returns the agent journey for a domain, running one only if there is not one already. Send only the domain and no body: ora selects the intent and the agent. Requires an ora-issued partner API key ('Authorization: Bearer <key>', issued manually - contact ora); without one, 401 PARTNER_KEY_REQUIRED. 200 means nothing was dispatched and an existing run answered, either finished (carrying its full `result`) or still running (open `stream_url` to watch it). 201 means a new run was dispatched. Branch on `dispatched`. A finished run is served indefinitely; `run_age_seconds` gives its age. There is no per-caller rate limit on this endpoint. Each domain is capped at 100 runs per rolling 24h, and one domain cannot start two runs at once - both are per-domain, neither limits how many domains you may ask for or how fast.
+     */
+    post: operations["getOrCreateDomainJourney"];
   };
   "/api/journey/runs/{id}/stream": {
     /**
@@ -335,7 +349,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a stable field or check id was removed, renamed, or changed meaning. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.15.0";
+      contractVersion: "1.17.0";
       /**
        * @description Present only when this body is a stored result served by the freshness gate instead of a fresh scan. Absent on a live scan.
        * @enum {boolean}
@@ -461,7 +475,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a stable field or check id was removed, renamed, or changed meaning. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.15.0";
+      contractVersion: "1.17.0";
       /** @description Wall-clock duration of the scan that produced this stored result */
       durationMs: number | null;
       /**
@@ -505,7 +519,7 @@ export interface components {
        * @description The contract version this catalog conforms to - identical to the OpenAPI info.version and the MCP server version. SemVer: a major means a stable field or a check or layer id was removed, renamed, or changed meaning. The full versioning policy is published in the API description at /api/openapi.json.
        * @enum {string}
        */
-      contractVersion: "1.15.0";
+      contractVersion: "1.17.0";
       /** @description The four scored layers in scoring order, with display name and current weight. */
       layers: {
           /** @description Stable layer id: discovery, accessibility, usability, or payments. Removing or renaming a layer id is a major version change. Note one intentional divergence: the id 'accessibility' carries the display name 'Access'. */
@@ -517,7 +531,7 @@ export interface components {
         }[];
       /** @description All catalogued checks. Array order is not contractual: key by id. */
       checks: ({
-          /** @description Stable check identifier, safe to persist and to gate CI on. Removing, renaming, or changing the meaning of an id is a major version change. */
+          /** @description Stable check identifier, safe to persist, to gate CI on, and to pass in POST /api/scan/checks. Removing, renaming, or changing the meaning of an id is a major version change. */
           id: string;
           /** @description Human-readable check title. Advisory display prose. */
           name: string;
@@ -541,6 +555,8 @@ export interface components {
           maturity: string;
           /** @description Always present. True when the check's underlying spec is a draft or emerging standard. */
           draft: boolean;
+          /** @description Always present. True marks a beta placeholder held at not-applicable - it runs but cannot affect any score; do not offer it as fixable. */
+          beta: boolean;
           /** @description Canonical spec or standard URL. Omitted when the check has none. */
           specUrl?: string;
           /** @description Generic, target-independent fix guidance. Omitted for the few checks that have none. */
@@ -548,7 +564,7 @@ export interface components {
         })[];
     };
     CatalogCheck: {
-      /** @description Stable check identifier, safe to persist and to gate CI on. Removing, renaming, or changing the meaning of an id is a major version change. */
+      /** @description Stable check identifier, safe to persist, to gate CI on, and to pass in POST /api/scan/checks. Removing, renaming, or changing the meaning of an id is a major version change. */
       id: string;
       /** @description Human-readable check title. Advisory display prose. */
       name: string;
@@ -572,6 +588,8 @@ export interface components {
       maturity: string;
       /** @description Always present. True when the check's underlying spec is a draft or emerging standard. */
       draft: boolean;
+      /** @description Always present. True marks a beta placeholder held at not-applicable - it runs but cannot affect any score; do not offer it as fixable. */
+      beta: boolean;
       /** @description Canonical spec or standard URL. Omitted when the check has none. */
       specUrl?: string;
       /** @description Generic, target-independent fix guidance. Omitted for the few checks that have none. */
@@ -584,6 +602,64 @@ export interface components {
       name: string;
       /** @description The layer's weight in the overall 0-100 score. Weights sum to 100 across the four layers. Advisory: a rebalance lands on a minor version with a changelog entry. */
       weight: number;
+    };
+    /** @description Request body for POST /api/scan/checks - run a selected subset of catalogued checks against a URL and get per-check results back. */
+    RunChecksRequest: {
+      /** @description The website, MCP server, or API URL to run checks against. A bare domain like example.com is accepted. */
+      url: string;
+      /** @description Array of check ids from GET /api/checks - one id minimum, up to the catalogued check count. Duplicate ids are deduplicated; ids the catalog does not list are rejected with error code UNKNOWN_CHECK_IDS. */
+      checkIds: string[];
+      /** @description Optional URL of the target's MCP server, matching the same field on POST /api/scan. When omitted, ora auto-discovers MCP endpoints. An empty string is treated as absent. */
+      mcpUrl?: unknown;
+    };
+    /** @description The outcome of a selective check run. The run always executes - results are never served from a cache. The response carries no aggregate score of any kind: per-check score and maxScore only, with GET /api/score/{domain} as the score surface. Results carry no tier or layer fields - join with GET /api/checks by id to group or rank them. */
+    RunChecksResponse: {
+      /**
+       * @description The contract version this response conforms to - identical to the OpenAPI info.version and the MCP server version. The full versioning policy is published in the API description at /api/openapi.json.
+       * @enum {string}
+       */
+      contractVersion: "1.17.0";
+      /** @description The apex domain derived from the requested URL. */
+      domain: string;
+      /** @description The normalized URL the run targeted. */
+      url: string;
+      /**
+       * @description The execution kind detected for the target - domain, mcp, or mcp-app. Detected server-side; requested ids that cannot apply to this kind resolve as 'na' entries instead of executing.
+       * @enum {string}
+       */
+      urlKind: "domain" | "mcp" | "mcp-app";
+      /** @description Whether these results were patched into the target's current stored scan. Patching is available to scan API key callers today - keyless runs are stateless and always report false. When true, GET /api/score/{domain} and the public score page reflect the re-verified checks, recomputed over the full stored check set. When false, no public surface changed; a full POST /api/scan is the way to establish a stored scan. */
+      storedScanUpdated: boolean;
+      /** @description One entry per executed check slot, plus one 'na' entry for each requested id that cannot apply to the detected kind. Every requested id yields at least one entry, and MCP fan-out can yield several entries per id, keyed by (id, mcpUrl). */
+      results: components["schemas"]["RunChecksResultEntry"][];
+    };
+    RunChecksResultEntry: {
+      /** @description The check id, as listed in GET /api/checks. */
+      id: string;
+      /** @description Human-readable check title. */
+      name: string;
+      /**
+       * @description One of: pass | fail | warning | na | error. 'error' means ora could not complete the probe - retry it. A failed fix reads 'fail', never 'error'. 'pending' cannot appear: selective runs resolve synchronously.
+       * @enum {string}
+       */
+      status: "pass" | "fail" | "warning" | "na" | "error";
+      /** @description Points the check earned on this run. */
+      score: number;
+      /** @description The check's maximum points. Do not sum maxScore values into an aggregate - a selective response deliberately carries no overall score. */
+      maxScore: number;
+      /** @description What was observed on the target. */
+      details: string;
+      /** @description How to fix the finding. Omitted when no guidance applies. */
+      recommendation?: string;
+      /** @description Why the check did not apply. Present on 'na' results, including requested ids that cannot apply to the detected kind. */
+      naReason?: string;
+      /**
+       * @description The classification of the MCP surface this entry scored against - one of: product | docs | other | app. Present on MCP fan-out entries.
+       * @enum {string}
+       */
+      mcpKind?: "product" | "docs" | "other" | "app";
+      /** @description The URL of the MCP server this entry scored against. Present on MCP fan-out entries. */
+      mcpUrl?: string;
     };
     JourneyRun: {
       /** @description Run id - the handle for GET /api/journey/runs/{id} and the stream */
@@ -959,6 +1035,272 @@ export interface components {
           journey_layers?: ("discovery" | "identity" | "access" | "payments" | "experience")[];
         };
       };
+    };
+    JourneyDomainRun: {
+      /** @description Run id - the handle for GET /api/journey/runs/{id} and the stream */
+      id: string;
+      /**
+       * @description Lifecycle status. failed is terminal; a failed run has no result.
+       * @enum {string}
+       */
+      status: "running" | "succeeded" | "failed";
+      /** @description Curated intent id (see GET /api/journey/intents) */
+      intent_id?: string;
+      /** @description Target domain */
+      domain?: string;
+      /** @description The agent configuration that ran (or is running) */
+      agent: {
+        /** @description Agent harness wire name */
+        harness: string;
+        /** @description Model the harness drives */
+        model: string;
+      };
+      started_at: string;
+      finished_at?: string;
+      /** @description SSE stream for this run: run_id -> trajectory -> processing -> result | error */
+      stream_url: string;
+      /**
+       * @description Canonical success verdict, present once the run finished
+       * @enum {string}
+       */
+      verdict?: "satisfied" | "partial" | "unsatisfied" | "not_gradable";
+      /** @description Billable steps the run took (tool calls, excluding narration and filesystem ops), present once the run finished. This is the same counter run pricing uses. */
+      step_count?: number;
+      /** @description Journey/audit contract version (shared SemVer; see docs) */
+      contractVersion: string;
+      /** @description The full run result. Present iff status is 'succeeded'. */
+      result?: {
+        /** @description Run id. Absent on legacy persisted runs. */
+        run_id?: string;
+        /** @description Curated intent id the run executed */
+        intent_id?: string;
+        /** @description Target domain */
+        domain?: string;
+        /** @description Agent harness: claude-agent-sdk | openai-agents | ash */
+        harness?: string;
+        /** @description Model the harness drove */
+        model?: string;
+        started_at?: string;
+        finished_at?: string;
+        /** @description Agent lifecycle outcome. Key 'did it work?' off verdict, not this. */
+        outcome: string;
+        /**
+         * @description Canonical success verdict, judge-authoritative and always resolved (legacy runs included). THE field to key success on.
+         * @enum {string}
+         */
+        verdict: "satisfied" | "partial" | "unsatisfied" | "not_gradable";
+        /** @description The agent's final free-text answer. Experimental: raw model output that can reflect content fetched from the target site - may change or disappear without a major version. */
+        agent_response?: string;
+        /** @description Agent turns the run took */
+        num_turns?: number;
+        /** @description Wall-clock run duration */
+        duration_ms?: number;
+        /** @description Model spend for the run in USD. Experimental: tracks provider accounting and may change or disappear without a major version. */
+        cost_usd?: number;
+        /** @description Total input tokens the run consumed. Experimental. */
+        input_tokens?: number;
+        /** @description Total output tokens the run produced. Experimental. */
+        output_tokens?: number;
+        /** @description Prompt-cache read tokens. Experimental. */
+        cache_read_tokens?: number;
+        /** @description Prompt-cache write tokens. Experimental. */
+        cache_write_tokens?: number;
+        /** @description The full step tree the agent took. Absent on legacy persisted runs. */
+        trajectory?: {
+          /** @description Cumulative step tree, in emission order */
+          steps: ({
+              /** @description Index in steps[] - stable node identifier */
+              id: number;
+              /** @description Agent turn this step belongs to */
+              turn?: number;
+              /**
+               * @description tool_call = an action against the target; text = narrative reasoning between actions
+               * @enum {string}
+               */
+              type: "tool_call" | "text";
+              /** @description Index of the parent step in this same array (tree edge) */
+              parent_id?: number;
+              /** @description Action family: search | fetch | api_call | text | bash_fs | skill */
+              action?: string;
+              /** @description Concrete tool the harness invoked */
+              tool?: string;
+              /** @description Full URL the step targeted, when it targeted one */
+              url?: string;
+              /** @description Host of the targeted URL */
+              url_host?: string;
+              /** @description Path of the targeted URL */
+              url_path?: string;
+              /** @description Query string, on search steps */
+              search_query?: string;
+              /** @description direct = the agent navigated on its own; follow = it followed a link */
+              source?: string;
+              /** @description Relation of the target to the run's domain: exact | subdomain | external */
+              anchor_relation?: string;
+              /** @description Why the agent went here - the navigation-source attribution */
+              attribution?: {
+                /** @description How the agent found this step: prior_knowledge | web_search | previous_artifact | other */
+                kind: string;
+                /** @description Artifact kind this step was attributed to */
+                artifact_kind?: string;
+                /** @description Signal id backing the attribution, when one matched */
+                signal_id?: string;
+                /** @description Attribution method: heuristic | llm */
+                method?: string;
+                /** @description Attribution confidence: strong | weak */
+                confidence?: string;
+                /** @description The referring step, when attributed to a previous artifact */
+                referrer?: {
+                  /** @description Turn index of the referring step */
+                  turn: number;
+                  /** @description Parent step id - the tree edge the trajectory graph renders */
+                  step_id?: number;
+                  /** @description Artifact kind of the referring step (e.g. llms_txt, sitemap) */
+                  artifact_kind?: string;
+                  /** @description URL path of the referring step */
+                  url_path?: string;
+                };
+              };
+              /** @description Key of the artifact this step fetched, when recognised */
+              artifact_key?: string;
+              /** @description HTTP method of a fetch step */
+              fetch_method?: string;
+              /** @description HTTP status the step observed, once resolved */
+              status?: number;
+              /** @description Wall-clock duration of the step */
+              duration_ms?: number;
+              /** @description Engine-provided display label for the node, when present */
+              label?: string;
+              /** @description tool_call steps only: whether the call has resolved. False while the step is still in flight on a live stream. */
+              completed?: boolean;
+              /** @description Name of the invoked skill, on skill steps */
+              skill_name?: string;
+              /** @description text steps only: the narrative the agent emitted between actions. Advisory - raw model prose. */
+              text?: string;
+            })[];
+          /** @description Compact fingerprint of the action sequence */
+          action_sequence: string;
+          /** @description Ids of agent-readiness signals the run observed */
+          signals_observed: string[];
+          /** @description How the run resolved friction, when classified (e.g. succeeded_natively, needs_human_bridge) */
+          friction_outcome?: string;
+          /** @description HTTP status distribution over the run's requests */
+          status_profile?: {
+            count_2xx: number;
+            count_3xx: number;
+            count_4xx: number;
+            count_5xx: number;
+            /** @description Step id of the first 4xx/5xx, when any */
+            first_error_step?: number;
+            /** @description Artifact kind of the first errored step */
+            first_error_kind?: string;
+          };
+          /** @description Which discovery artifacts the agent probed for, and what it found */
+          well_known_probes: ({
+              /** @description Probed artifact (e.g. llms.txt, openapi.json) */
+              artifact: string;
+              signal_id?: string;
+              /** @description root_file | well_known | api_spec */
+              catalog: string;
+              probed: boolean;
+              fetched: boolean;
+              attempt_count: number;
+              first_status?: number;
+              first_step_ord?: number;
+              first_turn_index?: number;
+              /** @description The agent looked for this artifact and it was absent */
+              near_miss: boolean;
+            })[];
+          /** @description How the agent's visited paths were discovered */
+          path_origin_distribution?: {
+            prior_knowledge: number;
+            web_search: number;
+            previous_artifact: number;
+            other: number;
+          };
+          /** @description Share of navigations that followed an on-page link rather than a guess */
+          link_following_rate: number;
+        };
+        /** @description ora's generated read of the run. Absent on legacy persisted runs. */
+        insight?: {
+          /** @description ora's generated one-paragraph read of the run */
+          summary: string;
+          /** @description Bullet observations backing the summary */
+          key_observations: string[];
+          generated_at: string;
+          /** @description The journey layers this intent touched. NOTE: this is the journey taxonomy (5 layers), deliberately distinct from the audit report's 4 scoring layers - never map between the two. */
+          journey_layers?: ("discovery" | "identity" | "access" | "payments" | "experience")[];
+        };
+        /** @description Flat per-run signal summary. Experimental; absent on legacy runs. */
+        run_signals?: {
+          /** @description run_signals contract version (3 = current) */
+          version: number;
+          /** @description Engine-classified intent category */
+          intent_category: string;
+          /** @description high | low */
+          category_confidence: string;
+          /** @description The independent judge's grade: satisfied | partial | unsatisfied */
+          task_satisfied?: string;
+          /** @description Engine-reconciled success verdict; prefer the top-level verdict field, which is always resolved */
+          verdict?: string;
+          /** @description Agent lifecycle outcome. Key 'did it work?' off the top-level verdict, not this. */
+          outcome: string;
+          friction_outcome?: string;
+          bridge_classification?: string;
+          first_action?: string;
+          /** @description Where the agent went first */
+          first_target?: {
+            page_role: string;
+            anchor_relation?: string;
+            source?: string;
+          };
+          /** @description Engine's raw step count. Display step counts use the record's step_count (billable steps) instead. */
+          steps_count: number;
+          search_count: number;
+          /** @description Whether the agent reached the run's domain at all */
+          reached_anchor: boolean;
+          link_following_rate: number;
+          prior_knowledge_ratio: number;
+          signals_observed: string[];
+          /** @description Per page-role reach summary */
+          page_reach: {
+            [key: string]: {
+              reached: boolean;
+              first_turn: number;
+              steps_to: number;
+            };
+          };
+          /** @description Per artifact probe summary */
+          artifacts: {
+            [key: string]: {
+              probed: boolean;
+              fetched: boolean;
+              first_turn?: number;
+            };
+          };
+          /** @description Step ids on the success path, when the run succeeded */
+          success_step_ids: number[];
+          success_route: {
+            artifacts: {
+              [key: string]: string;
+            };
+            page_roles: {
+              [key: string]: string;
+            };
+            closer?: {
+              artifact_key?: string;
+              page_role?: string;
+            };
+          };
+          /** @description Journey-taxonomy layers (5), distinct from the audit report's 4 scoring layers. Falls back to insight.journey_layers on v1/v2 signals; absent when the run was never classified. */
+          journey_layers?: ("discovery" | "identity" | "access" | "payments" | "experience")[];
+        };
+      };
+      /** @description Whether this request started a new agent run. false means an existing run answered (finished, or already in flight) and nothing was spent; true means a fresh run was dispatched and is now running. */
+      dispatched: boolean;
+      /** @description Age of the run being served, in seconds. Absent on a freshly dispatched run, and on a stored run whose timestamp does not parse. Use it to label how current the journey is - runs are served indefinitely, so this can be large. */
+      run_age_seconds?: number;
+      /** @description Present only when the domain's per-target run cap is saturated, so the run being served is the newest stored one rather than a fresh dispatch. Milliseconds until a slot frees. */
+      retry_after_ms?: number;
     };
     JourneyRunResult: {
       /** @description Run id. Absent on legacy persisted runs. */
@@ -1792,6 +2134,45 @@ export interface operations {
     };
   };
   /**
+   * Run a selected subset of checks against a URL
+   * @description Runs only the checks you select against the given URL and returns per-check results - the re-verify step after shipping a fix, with check ids from GET /api/checks. The run always executes; results are never served from a cache, so a re-check reflects the fix you just deployed (allow for DNS and CDN caches clearing). For most or all of the catalog, use POST /api/scan instead: same budget unit, and it returns a score. The response carries no aggregate score; GET /api/score/{domain} is the score surface. Callers holding a scan API key also get stored-scan patching - see storedScanUpdated on the response. Rate limited two ways: 10 requests per minute per IP, and one run spends one unit of the daily scan budget shared with POST /api/scan, spent once the target has been probed and classified; requests rejected earlier (invalid input, unknown ids, unreachable) spend nothing. Scan API key callers are exempt from both - an exemption, not a larger allowance; keys are issued manually on request - contact ora.
+   */
+  runChecks: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RunChecksRequest"];
+      };
+    };
+    responses: {
+      /** @description Per-check results for the selection - at least one entry per requested id, including 'na' entries for ids that cannot apply to the detected kind. Always synchronous and complete: there is no 202 and no pending status. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["RunChecksResponse"];
+        };
+      };
+      /** @description Invalid input - either a schema failure (`{ error, details }` with the Zod detail, whose checkIds bounds messages point at POST /api/scan for full runs) or an id the catalog does not list (`code: "UNKNOWN_CHECK_IDS"` with the offending ids echoed in `details` and GET /api/checks as the pointer), or an invalid / unreachable domain. */
+      400: {
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Rate limit exceeded - either the 10-per-minute burst cap (body `{ error }`) or the durable daily scan budget shared with POST /api/scan (body also carries `retry_after_ms`). Both carry a Retry-After header with the seconds until the caller's window frees up. */
+      429: {
+        headers: {
+          /** @description Seconds until next allowed request */
+          "Retry-After"?: number;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Selective run failed */
+      500: {
+        content: never;
+      };
+    };
+  };
+  /**
    * Get cached score for a domain
    * @description Returns the most recent cached scan result for the given domain. Read-only: never triggers a scan. On miss (404) or when the previous scan got stuck mid-flight (200 with `analysisStatus: "stuck"`), the response carries a structured `next_action` envelope pointing at `POST /api/scan` so agent callers have a machine-parseable next step. Successful responses are cached for 1 hour; stuck, 404, and ephemeral (disposable, `urlKind: "ephemeral"`) responses are uncached (`Cache-Control: no-store`) so a successful re-scan is observable immediately and a deleted disposable row is never served from cache. Rate limited to 10 requests per minute per IP - returns 429 if exceeded.
    */
@@ -1869,7 +2250,7 @@ export interface operations {
   };
   /**
    * Get the complete catalog of scanner checks
-   * @description Returns every check the ora scanner can run - stable id, scored layer, max score, applicability, eligible scan kinds, tier, maturity, and fix guidance per check, plus the four scored layers with their weights. Check ids are stable: gate CI on an explicit id list, not on tiers (the required set can grow on a minor version). The document is static and byte-stable between check-set changes, so diffing it detects catalog updates. No parameters. Sends Access-Control-Allow-Origin: * and is CDN-cached for 1 hour. Rate limited to 60 requests per minute per IP - returns 429 with a Retry-After header if exceeded.
+   * @description Returns every check the ora scanner can run - stable id, scored layer, max score, applicability, eligible scan kinds, tier, maturity, and fix guidance per check, plus the four scored layers with their weights. Check ids are stable: gate CI on an explicit id list, not on tiers (the required set can grow on a minor version). Ids are also what POST /api/scan/checks takes, and every check carries a `beta` boolean for building check pickers - a beta check runs but cannot affect any score. The document is static and byte-stable between check-set changes, so diffing it detects catalog updates. No parameters. Sends Access-Control-Allow-Origin: * and is CDN-cached for 1 hour. Rate limited to 60 requests per minute per IP - returns 429 with a Retry-After header if exceeded.
    */
   listChecks: {
     responses: {
@@ -2379,7 +2760,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      /** @description Caller limit exceeded - the 20-per-minute burst cap (anonymous callers only; a keyed caller skips it), or the durable per-caller budget (10 runs per rolling 24h per IP anonymous, 1000 per rolling 24h per key; body carries `retry_after_ms`). Per-TARGET saturation is the 200 above, not this. */
+      /** @description Caller limit exceeded - the 20-per-minute burst cap (anonymous callers only; a keyed caller skips it), or the durable per-caller budget (200 runs per rolling 24h per IP anonymous, 1000 per rolling 24h per key; body carries `retry_after_ms`). Per-TARGET saturation is the 200 above, not this. */
       429: {
         headers: {
           /** @description Seconds until next allowed request */
@@ -2422,6 +2803,60 @@ export interface operations {
     };
   };
   /**
+   * Get or create a domain's agent journey
+   * @description Returns the agent journey for a domain, running one only if there is not one already. Send only the domain and no body: ora selects the intent and the agent. Requires an ora-issued partner API key ('Authorization: Bearer <key>', issued manually - contact ora); without one, 401 PARTNER_KEY_REQUIRED. 200 means nothing was dispatched and an existing run answered, either finished (carrying its full `result`) or still running (open `stream_url` to watch it). 201 means a new run was dispatched. Branch on `dispatched`. A finished run is served indefinitely; `run_age_seconds` gives its age. There is no per-caller rate limit on this endpoint. Each domain is capped at 100 runs per rolling 24h, and one domain cannot start two runs at once - both are per-domain, neither limits how many domains you may ask for or how fast.
+   */
+  getOrCreateDomainJourney: {
+    parameters: {
+      path: {
+        /** @description The domain, as a bare host (example.com). A full URL is accepted if percent-encoded, and is normalized to its apex. IP literals, localhost, and malformed hosts are rejected with 400 INVALID_DOMAIN. */
+        host: string;
+      };
+    };
+    responses: {
+      /** @description An existing run answered; nothing was dispatched (`dispatched` is false). Either a finished run with `result` and `run_age_seconds`, one still running, or - when the domain is over its 100-per-24h cap - its newest stored run with `retry_after_ms`. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["JourneyDomainRun"];
+        };
+      };
+      /** @description A new run was dispatched and is running (`dispatched` is true, no `result` yet). Open `stream_url` for the live trajectory, or poll GET /api/journey/runs/{id}. */
+      201: {
+        content: {
+          "application/json": components["schemas"]["JourneyDomainRun"];
+        };
+      };
+      /** @description `code: "INVALID_DOMAIN"` - the host is not a scannable domain. Also returned when the request carries body parameters, which this endpoint does not accept. */
+      400: {
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description `code: "PARTNER_KEY_REQUIRED"` - no recognized partner API key. Keys are issued manually; contact us at the address in this document's info.contact. To run a journey without a key, use POST /api/journey/runs with a curated intent. */
+      401: {
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Back off and retry the SAME DOMAIN; the body carries `retry_after_ms` and a `Retry-After` header. Both codes here are per-domain, never key-wide, so do not throttle your other traffic. `DISPATCH_IN_PROGRESS`: another request is already starting this domain. `TARGET_CAPPED`: this domain is over its 100-per-24h cap. */
+      429: {
+        headers: {
+          /** @description Seconds until next allowed request */
+          "Retry-After"?: number;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description The agent gateway is unreachable. No run was created and no allowance consumed, but this domain's dispatch claim is briefly held, so an immediate retry of the same domain answers 429 DISPATCH_IN_PROGRESS. Other domains are unaffected. */
+      503: {
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  /**
    * Stream a journey run's trajectory as Server-Sent Events
    * @description The live trajectory SSE for a run created by POST /api/journey/runs. Event names (stable): `run_id` ({ run_id }), then progressive `trajectory` frames (cumulative snapshots, each a { steps, ... } object of JourneyTrajectoryStep items), optionally `processing` ({ message }) while insights generate, and finally exactly one of `result` (a JourneyRunResult) or `error` ({ message }). Reopening the stream of a finished run replays the stored result instead of re-executing the agent (pass ?replay=1 for paced frames, plus &quick=1 to skip the startup delay); a plain reopen renders the finished journey in one frame. Long-lived: a live run can hold the connection for many minutes (function ceiling 800s). Rate limited 20 per minute per IP.
    */
@@ -2449,7 +2884,7 @@ export interface operations {
       404: {
         content: never;
       };
-      /** @description Rate limit exceeded - max 20 requests per minute per IP. */
+      /** @description Rate limit exceeded - max 20 requests per minute per IP. A caller presenting a recognized partner API key (Authorization: Bearer) is exempt when the run was already dispatched, since opening it only reads it; a run with no stored record executes on this open and stays limited for every caller. */
       429: {
         content: {
           "application/json": components["schemas"]["ErrorResponse"];
