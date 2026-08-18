@@ -6,9 +6,10 @@ Score any site's agent readiness — and watch real AI agents navigate it. Power
 npx @ora-ai/ax audit https://stripe.com
 ```
 
-Three commands:
+Four commands:
 
 - **`audit <url>`** — run ora's hosted agent-readiness audit against a site: live progress, then a layered report of what passed, what's broken, and ora's ranked list of the highest-impact fixes (or `--json` for the raw contract payload). No account or API key needed. Gate CI with `--min-score`.
+- **`deep-journey <url>`** — run a real AI agent at a site on one of ora's curated tasks through the public journey API: no key, no workspace. A partner API key unlocks free-text tasks (`--task`) and a larger allowance.
 - **`journey "<intent>"`** — send a real AI agent (claude-code, codex, …) at a site and watch its navigation live as a boxed node-graph, then get the scored insight, tokens, and cost. Requires an `ORA_API_KEY`.
 - **`skill [name]`** — list, print, or install ora's agent skills, digest-verified from the public registry.
 
@@ -23,7 +24,7 @@ ax audit <url> [--min-score n] [--max-age s] [--force] [--tunnel-cmd c] [--api-k
   Stripe offers strong developer resource discoverability, but lacks an OpenAPI specification.
 
   Discovery   ██████░░░░ 6/9 passed · 1 skipped
-    ✗ Issues (3)
+    ✗ Issues (2)
     ┌───┬──────────────┬───────────────────────────┬──────────────────────────────┐
     │   │ Check        │ What's wrong              │ How to fix                   │
     ├───┼──────────────┼───────────────────────────┼──────────────────────────────┤
@@ -109,7 +110,7 @@ Runs a real AI agent at a site through ora's **public** journey API — no key, 
   For the 4-layer readiness audit, run: ax audit stripe.com
 ```
 
-Anonymous callers run curated intents (`pricing`, `signup`, `api-docs`, `get started`, `support`, …) — list them with `GET https://ora.ai/api/journey/intents`, and the accepted agents with `GET https://ora.ai/api/journey/agents`. The public caps are 100 runs per rolling 24h per target and 200 runs per 24h per IP; a target at its cap answers with the most recent stored run (`rate_limited: true`) instead of an error, so repeat CI invocations are cheap. Verdict and step count come from ora's contract as-is — the CLI never re-judges a run.
+Anonymous callers run curated intents (`pricing`, `signup`, `api-docs`, `integrate`, `support`, …) — list them with `GET https://ora.ai/api/journey/intents`, and the accepted agents with `GET https://ora.ai/api/journey/agents`. The public caps are 100 runs per rolling 24h per target and 200 runs per 24h per IP (plus a 20/min burst limit); a target at its cap answers with the most recent stored run (`rate_limited: true`) instead of an error, so repeat CI invocations are cheap. Verdict and step count come from ora's contract as-is — the CLI never re-judges a run.
 
 **Keyed tier:** an ora-issued partner API key (`--api-key`, or `ORA_PARTNER_API_KEY` / `ORA_SCAN_API_KEY` in the environment) unlocks `--task` — a free-text task of 4–300 characters that replaces the curated intent — and moves the caller to an allowance of 1000 runs per rolling 24h per key with no per-target cap and no burst guard. Keys are issued manually by ora (no self-serve signup). A wrong or unrecognized key with a *curated* intent silently degrades to the anonymous tier; `--task` without a recognized key is an error.
 
@@ -134,9 +135,10 @@ This differs from `ax journey` (below), which drives the authenticated platform 
 ax skill                                # list the registry
 ax skill agent-ready-website            # print a SKILL.md
 ax skill agent-ready-website --install  # write .claude/skills/<name>/SKILL.md
+ax skill --json                         # the raw registry index
 ```
 
-Skills come from ora's public registry (`https://ora.ai/.well-known/agent-skills/`) and every byte is verified against the registry's sha256 digest before it is printed or installed. Skill content is never bundled into this package. `--dir <path>` overrides the install directory.
+Skills come from ora's public registry (`https://ora.ai/.well-known/agent-skills/`) and every byte is verified against the registry's sha256 digest before it is printed or installed. Skill content is never bundled into this package. `--dir <path>` overrides the install directory, and `--json` prints the registry index as JSON instead of the formatted list.
 
 ## journey
 
@@ -239,6 +241,7 @@ A `.env` in the working directory is read on startup — copy `.env.example` and
 |---|---|---|---|
 | `ORA_API_URL` | audit, deep-journey, skill | `https://ora.ai` | Public API base (no auth) |
 | `ORA_PLATFORM_URL` | journey | `https://api.agentfront.sh` | Authenticated platform API base |
+| `ORA_TUNNEL_CMD` | audit | — (optional) | Tunnel command for a local target (same as `--tunnel-cmd`) |
 | `ORA_API_KEY` | journey | — (required) | Secret key (`ora_sk_…`), exchanged for a short-lived bearer token |
 | `ORA_SCAN_API_KEY` | audit, deep-journey | — (optional) | ora-issued scan API key; lifts every scan rate limit (issued manually by ora). deep-journey accepts it as a partner-key fallback |
 | `ORA_PARTNER_API_KEY` | deep-journey | — (optional) | ora-issued partner API key; unlocks `--task` and the 1000/24h keyed allowance |
@@ -275,7 +278,7 @@ node scripts/mock-scan-server.mjs &
 ORA_API_URL=http://localhost:8799 node dist/main.cjs audit https://example.com
 ```
 
-To exercise the published-package experience locally: `npm pack`, then `npx ./ora-ai-ax-0.2.0.tgz audit https://example.com`, or `pnpm link --global` and use `ax` directly.
+To exercise the published-package experience locally: `npm pack`, then `npx ./ora-ai-ax-<version>.tgz audit https://example.com`, or `pnpm link --global` and use `ax` directly.
 
 ## Releasing
 
