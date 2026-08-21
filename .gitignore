@@ -4,3 +4,7 @@ coverage/
 .env
 *.tsbuildinfo
 .DS_Store
+
+# claude code local harness state (worktrees from EnterWorktree, per-user permissions)
+.claude/worktrees/
+.claude/settings.local.json
