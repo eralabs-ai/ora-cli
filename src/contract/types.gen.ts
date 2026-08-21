@@ -57,7 +57,7 @@ export interface paths {
   "/api/checks": {
     /**
      * Get the complete catalog of scanner checks
-     * @description Returns every check the ora scanner can run - stable id, scored layer, max score, applicability, eligible scan kinds, tier, maturity, and fix guidance per check, plus the four scored layers with their weights. Check ids are stable: gate CI on an explicit id list, not on tiers (the required set can grow on a minor version). Ids are also what POST /api/scan/checks takes, and every check carries a `beta` boolean for building check pickers - a beta check runs but cannot affect any score. The document is static and byte-stable between check-set changes, so diffing it detects catalog updates. No parameters. Sends Access-Control-Allow-Origin: * and is CDN-cached for 1 hour. Rate limited to 60 requests per minute per IP - returns 429 with a Retry-After header if exceeded.
+     * @description Returns every check the ora scanner can run - stable id, scored layer, max score, applicability, eligible scan kinds, tier, maturity, and fix guidance per check, plus the four scored layers with their weights. Check ids are stable: gate CI on an explicit id list, not on tiers (the required set can grow on a minor version). Ids are also what POST /api/scan/checks takes, and every check carries a `beta` boolean for building check pickers - a beta check runs but cannot affect any score. The document is static and byte-stable between check-set changes, so diffing it detects catalog updates. One optional parameter: `?include=essentials` adds `essentialsTier`, `essentialsBonusOnly`, and `essentialsExcluded` (the essentials-model classification; excluded checks are ignored by that model outright) to every check; without it the body is byte-identical to previous releases. Sends Access-Control-Allow-Origin: * and is CDN-cached for 1 hour. Rate limited to 60 requests per minute per IP - returns 429 with a Retry-After header if exceeded.
      */
     get: operations["listChecks"];
   };
@@ -270,6 +270,79 @@ export interface components {
       score: number;
       /** @enum {number} */
       scoreMax: 100;
+      /** @description Present only when the caller passed ?include=essentials. Carries its own `score` - there is no separate top-level essentials score field. */
+      essentials?: {
+        /** @description Alternate 0-100 'essentials' reading of the same scan: required checks carry 80 points, recommended 20, forward-looking signals are upside-only. Independent of `score` - the canonical ora score and grade do not use it. Null when too few checks apply to score. */
+        score: number | null;
+        /** @description Server-owned copy for the score band; render verbatim */
+        label: string;
+        /** @description Fixed 80-point budget, equal-weighted */
+        required: {
+          earned: number;
+          available: number;
+          passing: number;
+          total: number;
+        };
+        /** @description Fixed 20-point budget, equal-weighted */
+        recommended: {
+          earned: number;
+          available: number;
+          passing: number;
+          total: number;
+        };
+        bonusPoints: number;
+        /** @description Bonus-side checks with any earned signal */
+        bonusSignals: number;
+        /** @description Checks in the score denominator (required + recommended) */
+        eligibleChecks: number;
+        activeSurfaces: ({
+            /** @enum {string} */
+            id: "web" | "api" | "auth" | "mcp" | "graphql" | "commerce";
+            label: string;
+            score: number;
+            passing: number;
+            total: number;
+          })[];
+        accessSignals: ({
+            id: string;
+            label: string;
+            description: string;
+            /** @enum {string} */
+            state: "clear" | "mixed" | "blocked";
+            passing: number;
+            total: number;
+          })[];
+        /** @description One entry per eligible check id (post-averaging); every id in `issues` and `scoreEvidence` resolves here. Also includes zero-fraction bonus checks no array references - available but unearned signals */
+        checks: {
+          [key: string]: {
+            /**
+             * @description Essentials-model tier. Deliberately diverges from this check's `tier` in `layers[]` - the two hold different values by design.
+             * @enum {string}
+             */
+            tier: "required" | "recommended" | "emerging";
+            /** @description Upside-only in the essentials model: can add, never subtract. Independent of `bonus` in `layers[]`. */
+            bonus: boolean;
+            /** @description Earned share of this check, 0-1; duplicate per-MCP-kind runs are averaged into one entry */
+            fraction: number;
+            /** @description How many per-MCP-kind runs were averaged into this entry */
+            occurrences: number;
+            /** @description Uplift of a full fix in ESSENTIALS points. An estimate: it does not model surface activation. NOT comparable with `estScoreGain` in `layers[]`, which is denominated in canonical score points. */
+            essentialsGain: number | null;
+            /** @description Present ONLY where the essentials model overrides ora's copy; absent otherwise, in which case render the `recommendation` from `layers[].checks[]`. */
+            recommendation?: string;
+          };
+        };
+        /** @description Ids into `checks`: scored checks below full credit, pre-sorted (critical-access first, then required, then worst) - render in order, do not re-rank */
+        issues: string[];
+        scoreEvidence: {
+          /** @description Ids into `checks` */
+          essential: string[];
+          /** @description Ids into `checks` */
+          recommended: string[];
+          /** @description Ids into `checks`; earned bonus signals only */
+          bonus: string[];
+        };
+      };
       grade: string;
       gradeColor: string;
       ctaMessage: string | null;
@@ -349,7 +422,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a stable field or check id was removed, renamed, or changed meaning. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.17.0";
+      contractVersion: "1.19.1";
       /**
        * @description Present only when this body is a stored result served by the freshness gate instead of a fresh scan. Absent on a live scan.
        * @enum {boolean}
@@ -398,6 +471,79 @@ export interface components {
       score: number;
       /** @enum {number} */
       scoreMax: 100;
+      /** @description Present only when the caller passed ?include=essentials. Carries its own `score` - there is no separate top-level essentials score field. */
+      essentials?: {
+        /** @description Alternate 0-100 'essentials' reading of the same scan: required checks carry 80 points, recommended 20, forward-looking signals are upside-only. Independent of `score` - the canonical ora score and grade do not use it. Null when too few checks apply to score. */
+        score: number | null;
+        /** @description Server-owned copy for the score band; render verbatim */
+        label: string;
+        /** @description Fixed 80-point budget, equal-weighted */
+        required: {
+          earned: number;
+          available: number;
+          passing: number;
+          total: number;
+        };
+        /** @description Fixed 20-point budget, equal-weighted */
+        recommended: {
+          earned: number;
+          available: number;
+          passing: number;
+          total: number;
+        };
+        bonusPoints: number;
+        /** @description Bonus-side checks with any earned signal */
+        bonusSignals: number;
+        /** @description Checks in the score denominator (required + recommended) */
+        eligibleChecks: number;
+        activeSurfaces: ({
+            /** @enum {string} */
+            id: "web" | "api" | "auth" | "mcp" | "graphql" | "commerce";
+            label: string;
+            score: number;
+            passing: number;
+            total: number;
+          })[];
+        accessSignals: ({
+            id: string;
+            label: string;
+            description: string;
+            /** @enum {string} */
+            state: "clear" | "mixed" | "blocked";
+            passing: number;
+            total: number;
+          })[];
+        /** @description One entry per eligible check id (post-averaging); every id in `issues` and `scoreEvidence` resolves here. Also includes zero-fraction bonus checks no array references - available but unearned signals */
+        checks: {
+          [key: string]: {
+            /**
+             * @description Essentials-model tier. Deliberately diverges from this check's `tier` in `layers[]` - the two hold different values by design.
+             * @enum {string}
+             */
+            tier: "required" | "recommended" | "emerging";
+            /** @description Upside-only in the essentials model: can add, never subtract. Independent of `bonus` in `layers[]`. */
+            bonus: boolean;
+            /** @description Earned share of this check, 0-1; duplicate per-MCP-kind runs are averaged into one entry */
+            fraction: number;
+            /** @description How many per-MCP-kind runs were averaged into this entry */
+            occurrences: number;
+            /** @description Uplift of a full fix in ESSENTIALS points. An estimate: it does not model surface activation. NOT comparable with `estScoreGain` in `layers[]`, which is denominated in canonical score points. */
+            essentialsGain: number | null;
+            /** @description Present ONLY where the essentials model overrides ora's copy; absent otherwise, in which case render the `recommendation` from `layers[].checks[]`. */
+            recommendation?: string;
+          };
+        };
+        /** @description Ids into `checks`: scored checks below full credit, pre-sorted (critical-access first, then required, then worst) - render in order, do not re-rank */
+        issues: string[];
+        scoreEvidence: {
+          /** @description Ids into `checks` */
+          essential: string[];
+          /** @description Ids into `checks` */
+          recommended: string[];
+          /** @description Ids into `checks`; earned bonus signals only */
+          bonus: string[];
+        };
+      };
       grade: string;
       gradeColor: string;
       scannedAt: string | null;
@@ -475,7 +621,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a stable field or check id was removed, renamed, or changed meaning. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.17.0";
+      contractVersion: "1.19.1";
       /** @description Wall-clock duration of the scan that produced this stored result */
       durationMs: number | null;
       /**
@@ -519,7 +665,7 @@ export interface components {
        * @description The contract version this catalog conforms to - identical to the OpenAPI info.version and the MCP server version. SemVer: a major means a stable field or a check or layer id was removed, renamed, or changed meaning. The full versioning policy is published in the API description at /api/openapi.json.
        * @enum {string}
        */
-      contractVersion: "1.17.0";
+      contractVersion: "1.19.1";
       /** @description The four scored layers in scoring order, with display name and current weight. */
       layers: {
           /** @description Stable layer id: discovery, accessibility, usability, or payments. Removing or renaming a layer id is a major version change. Note one intentional divergence: the id 'accessibility' carries the display name 'Access'. */
@@ -618,7 +764,7 @@ export interface components {
        * @description The contract version this response conforms to - identical to the OpenAPI info.version and the MCP server version. The full versioning policy is published in the API description at /api/openapi.json.
        * @enum {string}
        */
-      contractVersion: "1.17.0";
+      contractVersion: "1.19.1";
       /** @description The apex domain derived from the requested URL. */
       domain: string;
       /** @description The normalized URL the run targeted. */
@@ -1931,6 +2077,8 @@ export interface operations {
         competitors?: "1";
         /** @description Pass `audit` to receive the versioned, allowlisted audit shape (AuditScanResult / AuditScoreResult) instead of the default body: every field is documented, carries a `contractVersion`, and internal fields are dropped. Omit it and the response is unchanged from previous releases. On GET /api/scan/stream, only the terminal `scan_complete` event's `result` is projected - all other events are identical to the default stream. */
         format?: "audit";
+        /** @description Opt-in expansion list (comma-separated). `essentials` adds one response key, `essentials`: an alternate reading of the same scan carrying its own `score` (0-100 or null - required checks share 80 points, recommended 20, forward-looking signals upside-only), the required/recommended buckets, label copy, per-surface sub-scores, access signals, and a `checks` map keyed by check id. That map holds the essentials INTERPRETATION only (tier, bonus, fraction, occurrences, `essentialsGain`) - name, status, details, ora's recommendation, and `estScoreGain` for the same id stay in `layers[].checks[]`, so nothing serializes twice; join on the id. The pre-sorted `issues` list and `scoreEvidence` are arrays of ids resolving in that map. Omit the parameter and the response is byte-identical to previous releases. On GET /api/checks, `essentials` instead adds `essentialsTier`, `essentialsBonusOnly`, and `essentialsExcluded` to every catalog check (an excluded check never enters the essentials model; since 1.19.1 that is the two robots.txt policy checks). */
+        include?: "essentials";
       };
     };
     requestBody: {
@@ -2183,6 +2331,8 @@ export interface operations {
         competitors?: "1";
         /** @description Pass `audit` to receive the versioned, allowlisted audit shape (AuditScanResult / AuditScoreResult) instead of the default body: every field is documented, carries a `contractVersion`, and internal fields are dropped. Omit it and the response is unchanged from previous releases. On GET /api/scan/stream, only the terminal `scan_complete` event's `result` is projected - all other events are identical to the default stream. */
         format?: "audit";
+        /** @description Opt-in expansion list (comma-separated). `essentials` adds one response key, `essentials`: an alternate reading of the same scan carrying its own `score` (0-100 or null - required checks share 80 points, recommended 20, forward-looking signals upside-only), the required/recommended buckets, label copy, per-surface sub-scores, access signals, and a `checks` map keyed by check id. That map holds the essentials INTERPRETATION only (tier, bonus, fraction, occurrences, `essentialsGain`) - name, status, details, ora's recommendation, and `estScoreGain` for the same id stay in `layers[].checks[]`, so nothing serializes twice; join on the id. The pre-sorted `issues` list and `scoreEvidence` are arrays of ids resolving in that map. Omit the parameter and the response is byte-identical to previous releases. On GET /api/checks, `essentials` instead adds `essentialsTier`, `essentialsBonusOnly`, and `essentialsExcluded` to every catalog check (an excluded check never enters the essentials model; since 1.19.1 that is the two robots.txt policy checks). */
+        include?: "essentials";
       };
       path: {
         /** @description The domain to look up (e.g. stripe.com). URL-encoded full URLs are normalized to their hostname. */
@@ -2250,9 +2400,15 @@ export interface operations {
   };
   /**
    * Get the complete catalog of scanner checks
-   * @description Returns every check the ora scanner can run - stable id, scored layer, max score, applicability, eligible scan kinds, tier, maturity, and fix guidance per check, plus the four scored layers with their weights. Check ids are stable: gate CI on an explicit id list, not on tiers (the required set can grow on a minor version). Ids are also what POST /api/scan/checks takes, and every check carries a `beta` boolean for building check pickers - a beta check runs but cannot affect any score. The document is static and byte-stable between check-set changes, so diffing it detects catalog updates. No parameters. Sends Access-Control-Allow-Origin: * and is CDN-cached for 1 hour. Rate limited to 60 requests per minute per IP - returns 429 with a Retry-After header if exceeded.
+   * @description Returns every check the ora scanner can run - stable id, scored layer, max score, applicability, eligible scan kinds, tier, maturity, and fix guidance per check, plus the four scored layers with their weights. Check ids are stable: gate CI on an explicit id list, not on tiers (the required set can grow on a minor version). Ids are also what POST /api/scan/checks takes, and every check carries a `beta` boolean for building check pickers - a beta check runs but cannot affect any score. The document is static and byte-stable between check-set changes, so diffing it detects catalog updates. One optional parameter: `?include=essentials` adds `essentialsTier`, `essentialsBonusOnly`, and `essentialsExcluded` (the essentials-model classification; excluded checks are ignored by that model outright) to every check; without it the body is byte-identical to previous releases. Sends Access-Control-Allow-Origin: * and is CDN-cached for 1 hour. Rate limited to 60 requests per minute per IP - returns 429 with a Retry-After header if exceeded.
    */
   listChecks: {
+    parameters: {
+      query?: {
+        /** @description Opt-in expansion list (comma-separated). `essentials` adds one response key, `essentials`: an alternate reading of the same scan carrying its own `score` (0-100 or null - required checks share 80 points, recommended 20, forward-looking signals upside-only), the required/recommended buckets, label copy, per-surface sub-scores, access signals, and a `checks` map keyed by check id. That map holds the essentials INTERPRETATION only (tier, bonus, fraction, occurrences, `essentialsGain`) - name, status, details, ora's recommendation, and `estScoreGain` for the same id stay in `layers[].checks[]`, so nothing serializes twice; join on the id. The pre-sorted `issues` list and `scoreEvidence` are arrays of ids resolving in that map. Omit the parameter and the response is byte-identical to previous releases. On GET /api/checks, `essentials` instead adds `essentialsTier`, `essentialsBonusOnly`, and `essentialsExcluded` to every catalog check (an excluded check never enters the essentials model; since 1.19.1 that is the two robots.txt policy checks). */
+        include?: "essentials";
+      };
+    };
     responses: {
       /** @description The complete check catalog */
       200: {
@@ -2814,7 +2970,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description An existing run answered; nothing was dispatched (`dispatched` is false). Either a finished run with `result` and `run_age_seconds`, one still running, or - when the domain is over its 100-per-24h cap - its newest stored run with `retry_after_ms`. */
+      /** @description An existing run answered; nothing was dispatched (`dispatched` is false). Either a finished run with `result` and `run_age_seconds` (final: no backoff hint), one still running (carries `retry_after_ms` and a `Retry-After` header: poll no faster than that), or - when the domain is over its 100-per-24h cap - its newest stored run with `retry_after_ms`. */
       200: {
         content: {
           "application/json": components["schemas"]["JourneyDomainRun"];
@@ -2838,7 +2994,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      /** @description Back off and retry the SAME DOMAIN; the body carries `retry_after_ms` and a `Retry-After` header. Both codes here are per-domain, never key-wide, so do not throttle your other traffic. `DISPATCH_IN_PROGRESS`: another request is already starting this domain. `TARGET_CAPPED`: this domain is over its 100-per-24h cap. */
+      /** @description Back off and retry the SAME DOMAIN; the body carries `retry_after_ms` and a `Retry-After` header. All three codes here are per-domain, never key-wide, so do not throttle your other traffic. `POLL_TOO_FAST`: you re-polled this domain inside 2 seconds; honour `retry_after_ms` on the previous response. `DISPATCH_IN_PROGRESS`: another request is already starting this domain. `TARGET_CAPPED`: this domain is over its 100-per-24h cap. */
       429: {
         headers: {
           /** @description Seconds until next allowed request */
