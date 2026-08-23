@@ -419,10 +419,10 @@ export interface components {
       /** @enum {string} */
       source: "ora.ai";
       /**
-       * @description The contract version this payload conforms to. SemVer: a major means a stable field or check id was removed, renamed, or changed meaning. See docs/api.md -> Contract and versioning.
+       * @description The contract version this payload conforms to. SemVer: a major means a response-envelope break - a stable field removed, renamed, or changed in meaning, or the default response format flipping - and is safe to pin. Additive changes and check-catalog membership changes ship on a minor. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.20.0";
+      contractVersion: "1.20.1";
       /**
        * @description Present only when this body is a stored result served by the freshness gate instead of a fresh scan. Absent on a live scan.
        * @enum {boolean}
@@ -618,10 +618,10 @@ export interface components {
       /** @enum {string} */
       source: "ora.ai";
       /**
-       * @description The contract version this payload conforms to. SemVer: a major means a stable field or check id was removed, renamed, or changed meaning. See docs/api.md -> Contract and versioning.
+       * @description The contract version this payload conforms to. SemVer: a major means a response-envelope break - a stable field removed, renamed, or changed in meaning, or the default response format flipping - and is safe to pin. Additive changes and check-catalog membership changes ship on a minor. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.20.0";
+      contractVersion: "1.20.1";
       /** @description Wall-clock duration of the scan that produced this stored result */
       durationMs: number | null;
       /**
@@ -659,13 +659,13 @@ export interface components {
         [key: string]: unknown;
       } | null;
     };
-    /** @description The complete catalog of scanner checks. Stability classes: every field's shape and presence rule is stable within a major version; check and layer ids are identity, so removing, renaming, or changing the meaning of one is a major version change; every other value (scores, weights, layer assignments, applicability, tiers, maturity, prose) is advisory and may change on a minor version, with score-relevant changes recorded in the contract changelog. Gate CI on an explicit list of check ids. */
+    /** @description The complete catalog of scanner checks. Stability classes: every field's shape and presence rule is stable within a major version; layer ids are envelope identity, so removing or renaming one is a major version change; check ids never change meaning while they exist, but catalog membership may change on a minor, with a contract changelog entry and a deprecation window; every other value (scores, weights, layer assignments, applicability, tiers, maturity, prose) is advisory and may change on a minor version, with score-relevant changes recorded in the contract changelog. Gate CI on an explicit list of check ids. */
     CheckCatalog: {
       /**
-       * @description The contract version this catalog conforms to - identical to the OpenAPI info.version and the MCP server version. SemVer: a major means a stable field or a check or layer id was removed, renamed, or changed meaning. The full versioning policy is published in the API description at /api/openapi.json.
+       * @description The contract version this catalog conforms to - identical to the OpenAPI info.version and the MCP server version. SemVer: a major means a response-envelope break (a stable field, or a layer id, removed or renamed or changed in meaning, or the default response format flipping) and is safe to pin; check-catalog membership changes ship on a minor. The full versioning policy is published in the API description at /api/openapi.json.
        * @enum {string}
        */
-      contractVersion: "1.20.0";
+      contractVersion: "1.20.1";
       /** @description The four scored layers in scoring order, with display name and current weight. */
       layers: {
           /** @description Stable layer id: discovery, accessibility, usability, or payments. Removing or renaming a layer id is a major version change. Note one intentional divergence: the id 'accessibility' carries the display name 'Access'. */
@@ -677,7 +677,7 @@ export interface components {
         }[];
       /** @description All catalogued checks. Array order is not contractual: key by id. */
       checks: ({
-          /** @description Stable check identifier, safe to persist, to gate CI on, and to pass in POST /api/scan/checks. Removing, renaming, or changing the meaning of an id is a major version change. */
+          /** @description Stable check identifier, safe to persist, to gate CI on, and to pass in POST /api/scan/checks. An id never changes meaning while it exists. Catalog membership is not frozen: an id can be retired or renamed on a MINOR version, always with a contract changelog entry and a deprecation window. Check ids identify catalog entries rather than response-envelope fields, so a client parsing responses keeps working when one disappears; a client gating on an explicit id list reads the changelog. */
           id: string;
           /** @description Human-readable check title. Advisory display prose. */
           name: string;
@@ -710,7 +710,7 @@ export interface components {
         })[];
     };
     CatalogCheck: {
-      /** @description Stable check identifier, safe to persist, to gate CI on, and to pass in POST /api/scan/checks. Removing, renaming, or changing the meaning of an id is a major version change. */
+      /** @description Stable check identifier, safe to persist, to gate CI on, and to pass in POST /api/scan/checks. An id never changes meaning while it exists. Catalog membership is not frozen: an id can be retired or renamed on a MINOR version, always with a contract changelog entry and a deprecation window. Check ids identify catalog entries rather than response-envelope fields, so a client parsing responses keeps working when one disappears; a client gating on an explicit id list reads the changelog. */
       id: string;
       /** @description Human-readable check title. Advisory display prose. */
       name: string;
@@ -764,7 +764,7 @@ export interface components {
        * @description The contract version this response conforms to - identical to the OpenAPI info.version and the MCP server version. The full versioning policy is published in the API description at /api/openapi.json.
        * @enum {string}
        */
-      contractVersion: "1.20.0";
+      contractVersion: "1.20.1";
       /** @description The apex domain derived from the requested URL. */
       domain: string;
       /** @description The normalized URL the run targeted. */
