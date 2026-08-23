@@ -3,6 +3,15 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  # The contract-drift job below is the alarm for "ora shipped a contract this
+  # build was not generated against". Until now it only ran on our own PRs, so
+  # nothing woke it when ora released: 1.20.0 shipped and every `ax` run warned
+  # about a stale contract for days before anyone noticed. On this schedule the
+  # alarm fires on its own; workflow_dispatch is for checking straight after a
+  # known ora release instead of waiting for the next run.
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
 
 # Least privilege: CI only ever reads the repo.
 permissions:
@@ -22,6 +31,7 @@ jobs:
   quality:
     name: Lint & Typecheck
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,6 +57,7 @@ jobs:
   test:
     name: Test (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     strategy:
       # One Node version failing shouldn't hide the result on the others.
       fail-fast: false
@@ -73,6 +84,7 @@ jobs:
   build:
     name: Build & Package
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
