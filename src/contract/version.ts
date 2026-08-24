@@ -2,4 +2,4 @@
 // Regenerate: pnpm contract:gen [--url <openapi.json url>]
 
 /** The ora contract version (spec info.version) these types were generated from. */
-export const BUILT_AGAINST = "1.20.1";
+export const BUILT_AGAINST = "1.21.0";

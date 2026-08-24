@@ -155,14 +155,14 @@ export interface paths {
   "/api/journey/domains/{host}": {
     /**
      * Get or create a domain's agent journey
-     * @description Returns the agent journey for a domain, running one only if there is not one already. Send only the domain and no body: ora selects the intent and the agent. Requires an ora-issued partner API key ('Authorization: Bearer <key>', issued manually - contact ora); without one, 401 PARTNER_KEY_REQUIRED. 200 means nothing was dispatched and an existing run answered, either finished (carrying its full `result`) or still running (open `stream_url` to watch it). 201 means a new run was dispatched. Branch on `dispatched`. A finished run is served indefinitely; `run_age_seconds` gives its age. There is no per-caller rate limit on this endpoint. Each domain is capped at 100 runs per rolling 24h, and one domain cannot start two runs at once - both are per-domain, neither limits how many domains you may ask for or how fast.
+     * @description Returns the agent journey for a domain, running one only if there is not one already. Send only the domain and no body: ora selects the intent and the agent. Requires an ora-issued partner API key ('Authorization: Bearer <key>', issued manually - contact ora); without one, 401 PARTNER_KEY_REQUIRED. 200 means nothing was dispatched and an existing run answered, either finished (carrying its `result`) or still running (open `stream_url` to watch it). 201 means a new run was dispatched. Branch on `dispatched`. Two response views (see the `view` parameter): `graph` (JourneyDomainRunGraph, the default - `result` narrowed to what drawing the journey needs) and `full` (JourneyDomainRun, the complete projection, on `?view=full`). A finished run is served indefinitely; `run_age_seconds` gives its age. There is no per-caller rate limit on this endpoint. Each domain is capped at 100 runs per rolling 24h, and one domain cannot start two runs at once - both are per-domain, neither limits how many domains you may ask for or how fast.
      */
     post: operations["getOrCreateDomainJourney"];
   };
   "/api/journey/runs/{id}/stream": {
     /**
      * Stream a journey run's trajectory as Server-Sent Events
-     * @description The live trajectory SSE for a run created by POST /api/journey/runs. Event names (stable): `run_id` ({ run_id }), then progressive `trajectory` frames (cumulative snapshots, each a { steps, ... } object of JourneyTrajectoryStep items), optionally `processing` ({ message }) while insights generate, and finally exactly one of `result` (a JourneyRunResult) or `error` ({ message }). Reopening the stream of a finished run replays the stored result instead of re-executing the agent (pass ?replay=1 for paced frames, plus &quick=1 to skip the startup delay); a plain reopen renders the finished journey in one frame. Long-lived: a live run can hold the connection for many minutes (function ceiling 800s). Rate limited 20 per minute per IP.
+     * @description The live trajectory SSE for a run created by POST /api/journey/runs. Event names (stable): `run_id` ({ run_id }), then progressive `trajectory` frames (cumulative snapshots, each a { steps, ... } object of JourneyTrajectoryStep items), optionally `processing` ({ message }) while insights generate, and finally exactly one of `result` (a JourneyRunResult) or `error` ({ message }). Reopening the stream of a finished run replays the stored result instead of re-executing the agent (pass ?replay=1 for paced frames, plus &quick=1 to skip the startup delay); a plain reopen renders the finished journey in one frame. Partner keys on the graph stream tier receive graph-narrowed frames instead (the JourneyDomainRunGraph subset: trajectory frames carry only `steps`, and the result frame only verdict, finished_at, intent_id, the step tree, and the insight summary); event names are identical. Long-lived: a live run can hold the connection for many minutes (function ceiling 800s). Rate limited 20 per minute per IP.
      */
     get: operations["streamJourneyRun"];
   };
@@ -422,7 +422,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a response-envelope break - a stable field removed, renamed, or changed in meaning, or the default response format flipping - and is safe to pin. Additive changes and check-catalog membership changes ship on a minor. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.20.1";
+      contractVersion: "1.21.0";
       /**
        * @description Present only when this body is a stored result served by the freshness gate instead of a fresh scan. Absent on a live scan.
        * @enum {boolean}
@@ -621,7 +621,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a response-envelope break - a stable field removed, renamed, or changed in meaning, or the default response format flipping - and is safe to pin. Additive changes and check-catalog membership changes ship on a minor. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.20.1";
+      contractVersion: "1.21.0";
       /** @description Wall-clock duration of the scan that produced this stored result */
       durationMs: number | null;
       /**
@@ -665,7 +665,7 @@ export interface components {
        * @description The contract version this catalog conforms to - identical to the OpenAPI info.version and the MCP server version. SemVer: a major means a response-envelope break (a stable field, or a layer id, removed or renamed or changed in meaning, or the default response format flipping) and is safe to pin; check-catalog membership changes ship on a minor. The full versioning policy is published in the API description at /api/openapi.json.
        * @enum {string}
        */
-      contractVersion: "1.20.1";
+      contractVersion: "1.21.0";
       /** @description The four scored layers in scoring order, with display name and current weight. */
       layers: {
           /** @description Stable layer id: discovery, accessibility, usability, or payments. Removing or renaming a layer id is a major version change. Note one intentional divergence: the id 'accessibility' carries the display name 'Access'. */
@@ -764,7 +764,7 @@ export interface components {
        * @description The contract version this response conforms to - identical to the OpenAPI info.version and the MCP server version. The full versioning policy is published in the API description at /api/openapi.json.
        * @enum {string}
        */
-      contractVersion: "1.20.1";
+      contractVersion: "1.21.0";
       /** @description The apex domain derived from the requested URL. */
       domain: string;
       /** @description The normalized URL the run targeted. */
@@ -1439,6 +1439,116 @@ export interface components {
           };
           /** @description Journey-taxonomy layers (5), distinct from the audit report's 4 scoring layers. Falls back to insight.journey_layers on v1/v2 signals; absent when the run was never classified. */
           journey_layers?: ("discovery" | "identity" | "access" | "payments" | "experience")[];
+        };
+      };
+      /** @description Whether this request started a new agent run. false means an existing run answered (finished, or already in flight) and nothing was spent; true means a fresh run was dispatched and is now running. */
+      dispatched: boolean;
+      /** @description Age of the run being served, in seconds. Absent on a freshly dispatched run, and on a stored run whose timestamp does not parse. Use it to label how current the journey is - runs are served indefinitely, so this can be large. */
+      run_age_seconds?: number;
+      /** @description Present only when the domain's per-target run cap is saturated, so the run being served is the newest stored one rather than a fresh dispatch. Milliseconds until a slot frees. */
+      retry_after_ms?: number;
+    };
+    JourneyDomainRunGraph: {
+      /** @description Run id - the handle for GET /api/journey/runs/{id} and the stream */
+      id: string;
+      /**
+       * @description Lifecycle status. failed is terminal; a failed run has no result.
+       * @enum {string}
+       */
+      status: "running" | "succeeded" | "failed";
+      /** @description Curated intent id (see GET /api/journey/intents) */
+      intent_id?: string;
+      /** @description Target domain */
+      domain?: string;
+      /** @description The agent configuration that ran (or is running) */
+      agent: {
+        /** @description Agent harness wire name */
+        harness: string;
+        /** @description Model the harness drives */
+        model: string;
+      };
+      started_at: string;
+      finished_at?: string;
+      /** @description SSE stream for this run: run_id -> trajectory -> processing -> result | error */
+      stream_url: string;
+      /**
+       * @description Canonical success verdict, present once the run finished
+       * @enum {string}
+       */
+      verdict?: "satisfied" | "partial" | "unsatisfied" | "not_gradable";
+      /** @description Billable steps the run took (tool calls, excluding narration and filesystem ops), present once the run finished. This is the same counter run pricing uses. */
+      step_count?: number;
+      /** @description Journey/audit contract version (shared SemVer; see docs) */
+      contractVersion: string;
+      /** @description The graph-view run result. Present iff status is 'succeeded'. */
+      result?: {
+        /**
+         * @description Canonical success verdict, judge-authoritative and always resolved. THE field to key success on.
+         * @enum {string}
+         */
+        verdict: "satisfied" | "partial" | "unsatisfied" | "not_gradable";
+        finished_at?: string;
+        /** @description Curated intent id the run executed */
+        intent_id?: string;
+        /** @description The step tree the agent took, steps only. Absent on legacy persisted runs. */
+        trajectory?: {
+          /** @description Cumulative step tree, in emission order - the graph view's entire trajectory */
+          steps: ({
+              /** @description Index in steps[] - stable node identifier */
+              id: number;
+              /** @description Agent turn this step belongs to */
+              turn?: number;
+              /**
+               * @description tool_call = an action against the target; text = narrative reasoning between actions
+               * @enum {string}
+               */
+              type: "tool_call" | "text";
+              /** @description Index of the parent step in this same array (tree edge) */
+              parent_id?: number;
+              /** @description Action family: search | fetch | api_call | text | bash_fs | skill */
+              action?: string;
+              /** @description Concrete tool the harness invoked */
+              tool?: string;
+              /** @description Host of the targeted URL */
+              url_host?: string;
+              /** @description Path of the targeted URL */
+              url_path?: string;
+              /** @description Query string, on search steps */
+              search_query?: string;
+              /** @description Why the agent went here - the navigation-source attribution */
+              attribution?: {
+                /** @description How the agent found this step: prior_knowledge | web_search | previous_artifact | other */
+                kind: string;
+                /** @description Artifact kind this step was attributed to */
+                artifact_kind?: string;
+                /** @description The referring step, when attributed to a previous artifact */
+                referrer?: {
+                  /** @description Turn index of the referring step */
+                  turn: number;
+                  /** @description Parent step id - the tree edge the trajectory graph renders */
+                  step_id?: number;
+                };
+              };
+              /** @description HTTP method of a fetch step */
+              fetch_method?: string;
+              /** @description HTTP status the step observed, once resolved */
+              status?: number;
+              /** @description Wall-clock duration of the step */
+              duration_ms?: number;
+              /** @description Engine-provided display label for the node, when present */
+              label?: string;
+              /** @description tool_call steps only: whether the call has resolved. False while the step is still in flight on a live stream. */
+              completed?: boolean;
+              /** @description Name of the invoked skill, on skill steps */
+              skill_name?: string;
+              /** @description text steps only: the narrative the agent emitted between actions. Advisory - raw model prose. */
+              text?: string;
+            })[];
+        };
+        /** @description ora's generated summary of the run. Absent on legacy persisted runs. */
+        insight?: {
+          /** @description ora's generated one-paragraph read of the run */
+          summary: string;
         };
       };
       /** @description Whether this request started a new agent run. false means an existing run answered (finished, or already in flight) and nothing was spent; true means a fresh run was dispatched and is now running. */
@@ -2971,26 +3081,30 @@ export interface operations {
   };
   /**
    * Get or create a domain's agent journey
-   * @description Returns the agent journey for a domain, running one only if there is not one already. Send only the domain and no body: ora selects the intent and the agent. Requires an ora-issued partner API key ('Authorization: Bearer <key>', issued manually - contact ora); without one, 401 PARTNER_KEY_REQUIRED. 200 means nothing was dispatched and an existing run answered, either finished (carrying its full `result`) or still running (open `stream_url` to watch it). 201 means a new run was dispatched. Branch on `dispatched`. A finished run is served indefinitely; `run_age_seconds` gives its age. There is no per-caller rate limit on this endpoint. Each domain is capped at 100 runs per rolling 24h, and one domain cannot start two runs at once - both are per-domain, neither limits how many domains you may ask for or how fast.
+   * @description Returns the agent journey for a domain, running one only if there is not one already. Send only the domain and no body: ora selects the intent and the agent. Requires an ora-issued partner API key ('Authorization: Bearer <key>', issued manually - contact ora); without one, 401 PARTNER_KEY_REQUIRED. 200 means nothing was dispatched and an existing run answered, either finished (carrying its `result`) or still running (open `stream_url` to watch it). 201 means a new run was dispatched. Branch on `dispatched`. Two response views (see the `view` parameter): `graph` (JourneyDomainRunGraph, the default - `result` narrowed to what drawing the journey needs) and `full` (JourneyDomainRun, the complete projection, on `?view=full`). A finished run is served indefinitely; `run_age_seconds` gives its age. There is no per-caller rate limit on this endpoint. Each domain is capped at 100 runs per rolling 24h, and one domain cannot start two runs at once - both are per-domain, neither limits how many domains you may ask for or how fast.
    */
   getOrCreateDomainJourney: {
     parameters: {
+      query?: {
+        /** @description Response view. `graph` returns JourneyDomainRunGraph - the same record and envelope with `result` narrowed to what drawing the journey needs (the step tree, verdict, and insight summary; no run_signals, probes, usage aggregates, or agent_response). `full` returns the complete JourneyDomainRun projection. Omitted, the response is the graph view - pass `view=full` for the complete payload. An unrecognized value is a 400 with code INVALID_VIEW. */
+        view?: "graph" | "full";
+      };
       path: {
         /** @description The domain, as a bare host (example.com). A full URL is accepted if percent-encoded, and is normalized to its apex. IP literals, localhost, and malformed hosts are rejected with 400 INVALID_DOMAIN. */
         host: string;
       };
     };
     responses: {
-      /** @description An existing run answered; nothing was dispatched (`dispatched` is false). Either a finished run with `result` and `run_age_seconds` (final: no backoff hint), one still running (carries `retry_after_ms` and a `Retry-After` header: poll no faster than that), or - when the domain is over its 100-per-24h cap - its newest stored run with `retry_after_ms`. */
+      /** @description An existing run answered; nothing was dispatched (`dispatched` is false). Either a finished run with `result` and `run_age_seconds` (final: no backoff hint), one still running (carries `retry_after_ms` and a `Retry-After` header: poll no faster than that), or - when the domain is over its 100-per-24h cap - its newest stored run with `retry_after_ms`. The body is JourneyDomainRun, or JourneyDomainRunGraph when the effective view is `graph` (see the `view` parameter). */
       200: {
         content: {
-          "application/json": components["schemas"]["JourneyDomainRun"];
+          "application/json": components["schemas"]["JourneyDomainRun"] | components["schemas"]["JourneyDomainRunGraph"];
         };
       };
-      /** @description A new run was dispatched and is running (`dispatched` is true, no `result` yet). Open `stream_url` for the live trajectory, or poll GET /api/journey/runs/{id}. */
+      /** @description A new run was dispatched and is running (`dispatched` is true, no `result` yet). Open `stream_url` for the live trajectory, or poll GET /api/journey/runs/{id}. The record fields are identical across views, so this body is the same whichever view is in effect. */
       201: {
         content: {
-          "application/json": components["schemas"]["JourneyDomainRun"];
+          "application/json": components["schemas"]["JourneyDomainRun"] | components["schemas"]["JourneyDomainRunGraph"];
         };
       };
       /** @description `code: "INVALID_DOMAIN"` - the host is not a scannable domain. Also returned when the request carries body parameters, which this endpoint does not accept. */
@@ -3025,7 +3139,7 @@ export interface operations {
   };
   /**
    * Stream a journey run's trajectory as Server-Sent Events
-   * @description The live trajectory SSE for a run created by POST /api/journey/runs. Event names (stable): `run_id` ({ run_id }), then progressive `trajectory` frames (cumulative snapshots, each a { steps, ... } object of JourneyTrajectoryStep items), optionally `processing` ({ message }) while insights generate, and finally exactly one of `result` (a JourneyRunResult) or `error` ({ message }). Reopening the stream of a finished run replays the stored result instead of re-executing the agent (pass ?replay=1 for paced frames, plus &quick=1 to skip the startup delay); a plain reopen renders the finished journey in one frame. Long-lived: a live run can hold the connection for many minutes (function ceiling 800s). Rate limited 20 per minute per IP.
+   * @description The live trajectory SSE for a run created by POST /api/journey/runs. Event names (stable): `run_id` ({ run_id }), then progressive `trajectory` frames (cumulative snapshots, each a { steps, ... } object of JourneyTrajectoryStep items), optionally `processing` ({ message }) while insights generate, and finally exactly one of `result` (a JourneyRunResult) or `error` ({ message }). Reopening the stream of a finished run replays the stored result instead of re-executing the agent (pass ?replay=1 for paced frames, plus &quick=1 to skip the startup delay); a plain reopen renders the finished journey in one frame. Partner keys on the graph stream tier receive graph-narrowed frames instead (the JourneyDomainRunGraph subset: trajectory frames carry only `steps`, and the result frame only verdict, finished_at, intent_id, the step tree, and the insight summary); event names are identical. Long-lived: a live run can hold the connection for many minutes (function ceiling 800s). Rate limited 20 per minute per IP.
    */
   streamJourneyRun: {
     parameters: {
