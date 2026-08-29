@@ -138,6 +138,13 @@ export interface paths {
      */
     get: operations["ardGetJwks"];
   };
+  "/api/web-bot-auth/directory": {
+    /**
+     * Get the Web Bot Auth signature agent card (public keys for verifying ora's crawler)
+     * @description Returns ora's Web Bot Auth signature agent card: the client name, contact, stated purpose, and the public Ed25519 keys that verify HTTP Message Signatures (RFC 9421) on requests from ora's scanner. Bot-management verifiers resolve a signed request's `keyid` against the `kid` of a key here. Also served at /.well-known/http-message-signatures-directory via a rewrite, which is the path the specification fixes and the one verifiers fetch. `keys` is an empty array when no signing key is configured, so the endpoint is always valid JSON and can be probed unconditionally.
+     */
+    get: operations["getWebBotAuthDirectory"];
+  };
   "/api/journey/runs": {
     /**
      * Run an agent journey against a domain
@@ -422,7 +429,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a response-envelope break - a stable field removed, renamed, or changed in meaning, or the default response format flipping - and is safe to pin. Additive changes and check-catalog membership changes ship on a minor. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.21.0";
+      contractVersion: "1.23.0";
       /**
        * @description Present only when this body is a stored result served by the freshness gate instead of a fresh scan. Absent on a live scan.
        * @enum {boolean}
@@ -621,7 +628,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a response-envelope break - a stable field removed, renamed, or changed in meaning, or the default response format flipping - and is safe to pin. Additive changes and check-catalog membership changes ship on a minor. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.21.0";
+      contractVersion: "1.23.0";
       /** @description Wall-clock duration of the scan that produced this stored result */
       durationMs: number | null;
       /**
@@ -665,7 +672,7 @@ export interface components {
        * @description The contract version this catalog conforms to - identical to the OpenAPI info.version and the MCP server version. SemVer: a major means a response-envelope break (a stable field, or a layer id, removed or renamed or changed in meaning, or the default response format flipping) and is safe to pin; check-catalog membership changes ship on a minor. The full versioning policy is published in the API description at /api/openapi.json.
        * @enum {string}
        */
-      contractVersion: "1.21.0";
+      contractVersion: "1.23.0";
       /** @description The four scored layers in scoring order, with display name and current weight. */
       layers: {
           /** @description Stable layer id: discovery, accessibility, usability, or payments. Removing or renaming a layer id is a major version change. Note one intentional divergence: the id 'accessibility' carries the display name 'Access'. */
@@ -764,7 +771,7 @@ export interface components {
        * @description The contract version this response conforms to - identical to the OpenAPI info.version and the MCP server version. The full versioning policy is published in the API description at /api/openapi.json.
        * @enum {string}
        */
-      contractVersion: "1.21.0";
+      contractVersion: "1.23.0";
       /** @description The apex domain derived from the requested URL. */
       domain: string;
       /** @description The normalized URL the run targeted. */
@@ -2950,6 +2957,18 @@ export interface operations {
     };
   };
   /**
+   * Get the Web Bot Auth signature agent card (public keys for verifying ora's crawler)
+   * @description Returns ora's Web Bot Auth signature agent card: the client name, contact, stated purpose, and the public Ed25519 keys that verify HTTP Message Signatures (RFC 9421) on requests from ora's scanner. Bot-management verifiers resolve a signed request's `keyid` against the `kid` of a key here. Also served at /.well-known/http-message-signatures-directory via a rewrite, which is the path the specification fixes and the one verifiers fetch. `keys` is an empty array when no signing key is configured, so the endpoint is always valid JSON and can be probed unconditionally.
+   */
+  getWebBotAuthDirectory: {
+    responses: {
+      /** @description The signature agent card ({ client_name, homepage_uri, contact_email, purpose, keys: [...] }). */
+      200: {
+        content: never;
+      };
+    };
+  };
+  /**
    * Run an agent journey against a domain
    * @description Triggers a real agent run: an AI agent (harness + model) attempts a task (an intent) against the given domain, and ora records the trajectory and derives insights. Two-step flow: this endpoint returns fast with a run record whose `stream_url` serves the live trajectory as Server-Sent Events; poll GET /api/journey/runs/{id} instead if you do not want the stream. Two caller tiers. Anonymous: curated intents only (see GET /api/journey/intents) - the server derives the actual agent prompt from the intent id, so no free-text prompt can reach the engine. Keyed: a caller presenting an ora-issued partner API key ('Authorization: Bearer <key>', issued manually - contact ora) may instead send bounded free text (`intent.custom`, 4 to 300 characters, with `intent.domain` required), which the server anchors to the requested domain before dispatch and echoes back on the 201. Free text without a recognized key is a 401 with code CUSTOM_INTENT_REQUIRES_KEY; a curated body with a missing or unrecognized key is never an error and simply runs on the anonymous tier. The keyed free-text tier is also reachable from the ora CLI (ax deep-journey --task, v0.5+). Only publicly runnable agents are accepted (see GET /api/journey/agents). Unknown body fields are rejected (strict schema). Anonymous rate limits, three ways: a 20-per-minute burst cap per IP; a per-target cap of 100 runs per rolling 24h per (domain, intent, harness, model) - when a target is over the cap the response is HTTP 200 with the most recent stored run for that target (`rate_limited: true`) plus Retry-After, the freshness analog: a denied trigger still returns the newest result and consumes nothing; and a durable per-caller cap of 200 runs per rolling 24h per IP - exceeded, that one is a real 429 with `retry_after_ms` (there is no cached result to serve for a caller). Keyed rate limit, one way: 1000 runs per rolling 24h per key, exhaustion being the same 429 with `retry_after_ms`. A keyed caller skips both the burst cap and the per-target cap - free text fragments the target key, so a per-target window over it could never fill. Successful and capped responses carry X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Reset headers describing exactly one window: the per-target window on an anonymous response, the per-key caller window on a keyed one. Note: journey insights use the 5-layer journey taxonomy (discovery, identity, access, payments, experience), deliberately distinct from the 4 scoring layers of the audit report (POST /api/scan) - never map between the two.
    */
@@ -3119,7 +3138,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorResponse"];
         };
       };
-      /** @description Back off and retry the SAME DOMAIN; the body carries `retry_after_ms` and a `Retry-After` header. All three codes here are per-domain, never key-wide, so do not throttle your other traffic. `POLL_TOO_FAST`: you re-polled this domain inside 2 seconds; honour `retry_after_ms` on the previous response. `DISPATCH_IN_PROGRESS`: another request is already starting this domain. `TARGET_CAPPED`: this domain is over its 100-per-24h cap. */
+      /** @description Back off and retry the SAME DOMAIN; the body carries `retry_after_ms` and a `Retry-After` header. All three codes here are per-domain, never key-wide, so do not throttle your other traffic. `POLL_TOO_FAST`: more than 3 requests for this domain inside 2 seconds; back off by this response's `retry_after_ms`. The in-flight `200` also carries `retry_after_ms`, and a poller that honours it never sees this code. `DISPATCH_IN_PROGRESS`: another request is already starting this domain. `TARGET_CAPPED`: this domain is over its 100-per-24h cap. */
       429: {
         headers: {
           /** @description Seconds until next allowed request */
