@@ -30,18 +30,25 @@ Rehearse anything uncertain with `dry_run` checked: it does every step including
 
 ## One-time setup
 
-### `NPM_TOKEN`
+### OIDC Trusted Publishing
 
-Create a **granular access token** on npmjs.com with read+write on the `ax`
-**package** — `ax` is unscoped, so a token limited to the `@ora-ai` scope does
-*not* cover it; select the package explicitly (or "all packages"). Then:
+Publishing is tokenless: npm verifies the workflow's identity through GitHub's
+OIDC provider. The trusted publisher is configured on npmjs.com → `ax` →
+**Settings → Trusted Publisher**: GitHub Actions, org `eralabs-ai`, repository
+`ora-cli`, workflow `release.yml`, no environment, `npm publish` allowed. The
+workflow's `id-token: write` permission plus npm ≥ 11.5.1 (the job upgrades
+npm explicitly — Node 22 bundles npm 10, which silently skips the OIDC
+exchange) are the only other requirements.
 
-```sh
-gh secret set NPM_TOKEN --repo eralabs-ai/ora-cli
-```
+If you ever add an `environment:` to the release job (see hardening below),
+update the trusted publisher's environment name to match in the same breath —
+they must agree or publishes are rejected.
 
-Granular tokens bypass 2FA prompts, which is what makes automated publishing
-work. Give it an expiry and diarise the rotation.
+If tokenless publishing is ever broken and a release can't wait, the fallback
+is a **granular access token** with read+write on the `ax` **package** — `ax`
+is unscoped, so a token limited to the `@ora-ai` scope does *not* cover it —
+stored as `NPM_TOKEN` and passed as `NODE_AUTH_TOKEN` in the publish step.
+Prefer fixing OIDC.
 
 ### npm org
 
@@ -92,21 +99,15 @@ correctly refuse, because that version is already on npm.
 the fix forward under a new version. `npm deprecate` the bad one with a message
 pointing at the replacement.
 
-## Migrating to OIDC Trusted Publishing
+## After the first tokenless release
 
-Trusted Publishing removes the long-lived `NPM_TOKEN` entirely: npm verifies the
-workflow's identity through GitHub's OIDC provider instead of a stored
-credential. It requires the package to already exist — which `ax` does (the name
-came with prior versions), so this can be set up at any time:
+Once the first OIDC-published release lands cleanly:
 
-1. npmjs.com → the package → **Settings → Trusted Publisher** → GitHub Actions.
-   Set repository `eralabs-ai/ora-cli` and workflow `release.yml`.
-2. In [`.github/workflows/release.yml`](.github/workflows/release.yml), delete
-   the `NODE_AUTH_TOKEN` line from the *Publish to npm* step (and the comment
-   above it). Everything else already works — the job holds `id-token: write`
-   and publishes with `--provenance`.
-3. Verify with a `dry_run`, then cut a real patch release.
-4. Delete the `NPM_TOKEN` secret and revoke the token on npmjs.com.
+1. Delete the `NPM_TOKEN` repo secret and revoke the token on npmjs.com, if
+   either still exists.
+2. On npmjs.com → `ax` → **Settings → Publishing access**, switch to *Require
+   two-factor authentication and disallow bypass 2fa tokens*. Only do this
+   after OIDC is proven — it kills token-based publishing, fallback included.
 
 ## If you protect `main`
 
