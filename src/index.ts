@@ -1,5 +1,5 @@
-// The library surface of @ora-ai/ax: the same contract-typed client the CLI
-// commands use, importable as `import { audit } from "@ora-ai/ax"`. The bin
+// The library surface of ax: the same contract-typed client the CLI
+// commands use, importable as `import { audit } from "ax"`. The bin
 // stays a separate self-contained bundle - this entry ships unminified with
 // type declarations and has no runtime dependencies.
 

@@ -41,9 +41,9 @@ jobs:
       id-token: write # OIDC token for npm provenance attestation
     env:
       # setup-node writes an .npmrc referencing ${NODE_AUTH_TOKEN}, so every npm and
-      # pnpm call warns until something defines it. The publish step overrides this
-      # with the real token; an empty default just keeps the secret scoped there
-      # while removing a warning that otherwise buries real errors in the log.
+      # pnpm call warns until something defines it. Publishing itself is tokenless
+      # (OIDC Trusted Publishing); the empty default only silences a warning that
+      # otherwise buries real errors in the log.
       NODE_AUTH_TOKEN: ""
     steps:
       - name: Guard — releases ship from main only
@@ -138,17 +138,21 @@ jobs:
         run: pnpm smoke
 
       # Catches publishing an unbuilt or truncated bundle — npm would accept it
-      # silently and break every `npx @ora-ai/ax`. Last chance while the version
+      # silently and break every `npx ax`. Last chance while the version
       # is still free; once published it can never be reused.
       - name: Verify publishable tarball
         run: pnpm verify:pack
 
+      # OIDC Trusted Publishing (configured on npmjs.com for this repo +
+      # workflow) needs npm >= 11.5.1 for the token exchange; Node 22 bundles
+      # npm 10, which would silently skip OIDC and fail as unauthenticated.
+      - name: Upgrade npm for OIDC Trusted Publishing
+        run: |
+          npm install -g npm@11
+          npm --version
+
       - name: Publish to npm
         env:
-          # Swap for OIDC Trusted Publishing later — see RELEASING.md. The
-          # id-token permission this job already holds is the only other
-          # requirement, so the migration is deleting these two lines.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
