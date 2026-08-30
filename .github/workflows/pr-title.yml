@@ -1,0 +1,43 @@
+name: PR title
+
+# This repo squash-merges, so the PR title becomes the commit message on main.
+# Linting the title here is the equivalent of ora's commit-msg husky hook — a
+# local hook can't cover public contributors (not versioned, --no-verify) and
+# never sees the squash title anyway. Separate workflow from ci.yml so that
+# `edited` (title changes) re-runs only this check, not the whole CI matrix.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-title-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  commitlint:
+    name: Conventional commit title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Title goes through an env var, not template interpolation inside the
+      # script, so a crafted title can't inject shell.
+      - name: Lint PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$PR_TITLE" | pnpm exec commitlint
