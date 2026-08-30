@@ -4,7 +4,7 @@
 // tsup inlines package.json at build time (src/main.ts imports it), so a build
 // that ran *before* a version bump would publish a binary whose `ax --version`
 // lies. The release workflow bumps then builds; this asserts that ordering held.
-// Also checks the things that break `npx @ora-ai/ax` but never break `pnpm test`:
+// Also checks the things that break `npx ax` but never break `pnpm test`:
 // a missing shebang or a non-executable bin.
 
 import { execFileSync } from "node:child_process";

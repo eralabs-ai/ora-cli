@@ -138,7 +138,7 @@ jobs:
         run: pnpm smoke
 
       # Catches publishing an unbuilt or truncated bundle — npm would accept it
-      # silently and break every `npx @ora-ai/ax`. Last chance while the version
+      # silently and break every `npx ax`. Last chance while the version
       # is still free; once published it can never be reused.
       - name: Verify publishable tarball
         run: pnpm verify:pack

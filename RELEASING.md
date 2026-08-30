@@ -1,4 +1,4 @@
-# Releasing `@ora-ai/ax`
+# Releasing `ax`
 
 Releases are manual, deliberate, and run entirely in CI. Nobody publishes from a
 laptop.
@@ -17,7 +17,7 @@ laptop.
    skill invokes (today: `audit` and the flags its playbook shows), bump the
    pinned `CLI_RANGE` in the main repo's
    `src/lib/mcp/skills-content/agent-ready-website.ts` in the same breath and
-   run `npm run skills:gen` there - the skill's `npx @ora-ai/ax@<range>` calls
+   run `npm run skills:gen` there - the skill's `npx ax@<range>` calls
    resolve only the release line the playbook documents, so a range left
    behind quietly routes agents to the API fallback instead of the new CLI.
 
@@ -32,8 +32,9 @@ Rehearse anything uncertain with `dry_run` checked: it does every step including
 
 ### `NPM_TOKEN`
 
-Create a **granular access token** on npmjs.com with read+write on the `@ora-ai`
-scope, then:
+Create a **granular access token** on npmjs.com with read+write on the `ax`
+**package** — `ax` is unscoped, so a token limited to the `@ora-ai` scope does
+*not* cover it; select the package explicitly (or "all packages"). Then:
 
 ```sh
 gh secret set NPM_TOKEN --repo eralabs-ai/ora-cli
@@ -44,15 +45,24 @@ work. Give it an expiry and diarise the rotation.
 
 ### npm org
 
-The `@ora-ai` scope must exist on npmjs.com and the token's account needs publish
-rights on it. The scope is unclaimed as of the first release — claim it before
-someone else does.
+`ax` is unscoped but org-administered: scope and ownership are independent on
+npm. The package's owners are the `ora-ai` org maintainers, and the
+`ora-ai:developers` team holds a read-write grant
+(`npm access grant read-write ora-ai:developers ax`), so org members publish to
+it exactly as they do to `@ora-ai/*` packages. The token's account needs that
+access.
 
-## The first release
+## The rename from `@ora-ai/ax`
 
-`package.json` is at `0.1.0` and nothing is published yet. Any bump would skip
-`0.1.0` and make `0.1.1` your first version. To ship `0.1.0` itself, run the
-workflow with **`version_bump: none`**.
+Versions ≤ `0.5.3` shipped as `@ora-ai/ax`; the plain `ax` name was acquired in
+August 2026 and everything from the first `ax` release onward ships there. Two
+consequences:
+
+- `ax@0.0.1`–`0.2.2` predate us — an unrelated 2011 logging library that came
+  with the name. All are deprecated and must never be reused; every release must
+  version above them (the `0.5.x` line already does).
+- `@ora-ai/ax` stays published but deprecated, its message pointing here. Don't
+  publish to it again.
 
 ## When something goes wrong
 
@@ -86,10 +96,8 @@ pointing at the replacement.
 
 Trusted Publishing removes the long-lived `NPM_TOKEN` entirely: npm verifies the
 workflow's identity through GitHub's OIDC provider instead of a stored
-credential. It requires the package to already exist, which is why the first
-release uses a token.
-
-Once `@ora-ai/ax` is published:
+credential. It requires the package to already exist — which `ax` does (the name
+came with prior versions), so this can be set up at any time:
 
 1. npmjs.com → the package → **Settings → Trusted Publisher** → GitHub Actions.
    Set repository `eralabs-ai/ora-cli` and workflow `release.yml`.

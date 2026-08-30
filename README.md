@@ -3,7 +3,7 @@
 Score any site's agent readiness — and watch real AI agents navigate it. Powered by [ora](https://ora.ai)'s hosted APIs.
 
 ```
-npx @ora-ai/ax audit https://stripe.com
+npx ax audit https://stripe.com
 ```
 
 Four commands:
@@ -58,7 +58,7 @@ The **Top fixes** list is ranked by ora server-side (non-bonus fixes first, then
 
 ```yaml
 - name: Agent-readiness gate
-  run: npx @ora-ai/ax audit https://your-site.com --min-score 70
+  run: npx ax audit https://your-site.com --min-score 70
 ```
 
 Exit codes are the contract:
@@ -206,7 +206,7 @@ For local development, copy `.env.example` to `.env` — the CLI reads a `.env` 
 The same contract-typed client the CLI uses is importable:
 
 ```ts
-import { audit } from "@ora-ai/ax";
+import { audit } from "ax";
 
 const { result } = await audit("stripe.com");
 console.log(result.score, result.grade, result.topFixes);
@@ -217,7 +217,7 @@ console.log(result.score, result.grade, result.topFixes);
 The public journey client is exported too — the same no-key path as `ax deep-journey`:
 
 ```ts
-import { deepJourney, fetchJourneyAgents } from "@ora-ai/ax";
+import { deepJourney, fetchJourneyAgents } from "ax";
 
 const { agents, defaultId } = await fetchJourneyAgents();
 const agent = agents.find((a) => a.id === defaultId)!;
@@ -248,7 +248,7 @@ A `.env` in the working directory is read on startup — copy `.env.example` and
 
 ## Contract versioning
 
-The audit types are generated from ora's served OpenAPI spec (`pnpm contract:gen`); the build is pinned to a contract version and CI fails when production drifts from the checked-in types. At runtime, the CLI prints one stderr warning when ora reports a newer contract than the build — upgrade with `npm i -g @ora-ai/ax@latest`.
+The audit types are generated from ora's served OpenAPI spec (`pnpm contract:gen`); the build is pinned to a contract version and CI fails when production drifts from the checked-in types. At runtime, the CLI prints one stderr warning when ora reports a newer contract than the build — upgrade with `npm i -g ax@latest`.
 
 ## Migrating from 0.1.x
 

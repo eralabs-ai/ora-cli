@@ -26,7 +26,7 @@ export function loadLocalEnv(): boolean {
 		process.loadEnvFile();
 		return true;
 	} catch {
-		// No .env here. The common case: `npx @ora-ai/ax scan` needs no config.
+		// No .env here. The common case: `npx ax audit` needs no config.
 		return false;
 	}
 }

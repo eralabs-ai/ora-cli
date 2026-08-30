@@ -43,7 +43,7 @@ export function warnOnNewerContract(payloadVersion: string | undefined): void {
 	warned = true;
 	process.stderr.write(
 		`ora reports contract ${payloadVersion}; this CLI was built against ${BUILT_AGAINST}. ` +
-			"Newer fields may be missing from the output - upgrade with: npm i -g @ora-ai/ax@latest\n",
+			"Newer fields may be missing from the output - upgrade with: npm i -g ax@latest\n",
 	);
 }
 
