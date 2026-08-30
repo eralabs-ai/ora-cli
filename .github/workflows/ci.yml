@@ -3,6 +3,10 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  # Push runs keep main's badge honest and catch anything that lands outside
+  # the PR flow (an admin bypass, a release workflow push).
+  push:
+    branches: [main]
   # The contract-drift job below is the alarm for "ora shipped a contract this
   # build was not generated against". Until now it only ran on our own PRs, so
   # nothing woke it when ora released: 1.20.0 shipped and every `ax` run warned
@@ -31,7 +35,7 @@ jobs:
   quality:
     name: Lint & Typecheck
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,7 +61,7 @@ jobs:
   test:
     name: Test (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     strategy:
       # One Node version failing shouldn't hide the result on the others.
       fail-fast: false
@@ -84,7 +88,7 @@ jobs:
   build:
     name: Build & Package
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -138,3 +142,22 @@ jobs:
 
       - name: Fail on drift
         run: git diff --exit-code src/contract
+
+  # Aggregate gate: branch protection on `main` requires a single status check
+  # named `ci` instead of chasing per-matrix job names. contract-drift is
+  # deliberately excluded — drift means ora shipped, not that this PR is wrong,
+  # and a required check nobody's PR can fix teaches everyone to bypass gates.
+  ci:
+    runs-on: ubuntu-latest
+    needs: [quality, test, build]
+    if: always() && (github.event_name == 'pull_request' || github.event_name == 'push')
+    steps:
+      - name: Verify every required job passed
+        env:
+          RESULTS: quality=${{ needs.quality.result }} test=${{ needs.test.result }} build=${{ needs.build.result }}
+        run: |
+          echo "$RESULTS"
+          if [ "${{ needs.quality.result }}" != "success" ] || [ "${{ needs.test.result }}" != "success" ] || [ "${{ needs.build.result }}" != "success" ]; then
+            exit 1
+          fi
+          echo "All required checks passed."
