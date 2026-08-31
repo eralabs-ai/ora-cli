@@ -45,6 +45,11 @@ const PAGE = `<!doctype html>
   }
 </script></body></html>`;
 
+/** Output as one plain, whitespace-collapsed string - see the call sites. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching SGR escapes is the point
+const ANSI = /\u001b\[[0-9;]*m/g;
+const flat = (text) => text.replace(ANSI, "").replace(/\s+/g, " ");
+
 let failures = 0;
 function check(label, condition, detail = "") {
 	if (condition) {
@@ -108,11 +113,16 @@ async function main() {
 		report.code === 0,
 		`exit ${report.code}\n${report.stderr.slice(0, 400)}`,
 	);
-	check("renders the availability gate", /agent-ready/.test(report.stdout));
-	check("renders the pillars", /Pillars/.test(report.stdout));
-	// Collapsed: the footer is wrapped prose, so a phrase can straddle a line.
-	const flat = report.stdout.replace(/\s+/g, " ");
-	check("never calls a local audit published or ranked", /not published or ranked/.test(flat));
+	check("renders the availability gate", /agent-ready/.test(flat(report.stdout)));
+	check("renders the pillars", /Pillars/.test(flat(report.stdout)));
+	// Collapsed AND stripped of colour: the footer is wrapped prose, so a phrase
+	// can straddle a line, and the report colours whole lines - picocolors emits
+	// SGR escapes on a CI runner and not in a plain pipe, so a raw match passes
+	// locally and fails in CI.
+	check(
+		"never calls a local audit published or ranked",
+		/not published or ranked/.test(flat(report.stdout)),
+	);
 
 	const json = await run(["webmcp-audit", target, "--json"], env);
 	check("--json exits 0", json.code === 0, `exit ${json.code}`);
@@ -147,7 +157,8 @@ async function main() {
 	check("exits 2 when the named Chrome does not answer", noChrome.code === 2);
 	check(
 		"says how to start one, never how to download one",
-		/remote-debugging-port/.test(noChrome.stderr) && !/playwright|puppeteer/i.test(noChrome.stderr),
+		/remote-debugging-port/.test(flat(noChrome.stderr)) &&
+			!/playwright|puppeteer/i.test(noChrome.stderr),
 	);
 
 	console.log(failures === 0 ? "\nwebmcp smoke passed\n" : `\nwebmcp smoke FAILED (${failures})\n`);

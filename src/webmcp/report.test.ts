@@ -9,9 +9,24 @@ const AUDIT = (
 	) as { audit: PublicWebmcpAudit }
 ).audit;
 
-/** Rendered lines as one whitespace-collapsed string, for asserting on prose
- * that the renderer wraps to the terminal width. */
-const flat = (lines: string[]) => lines.join(" ").replace(/\s+/g, " ");
+/**
+ * Rendered lines as one plain, whitespace-collapsed string.
+ *
+ * Both steps are needed. The renderer wraps prose to the terminal width, so a
+ * phrase can straddle a line; and it colours whole lines, so SGR escapes sit
+ * between the words - and whether picocolors emits them at all depends on
+ * whether stdout is a TTY, which differs between a local run and CI. Asserting
+ * on raw output passes in one and fails in the other.
+ */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching SGR escapes is the point
+const ANSI = /\u001b\[[0-9;]*m/g;
+const flat = (lines: string[]) => lines.join(" ").replace(ANSI, "").replace(/\s+/g, " ");
+
+/** Neutralise ESC the same way the renderer's `plain` does, so a payload can be
+ * rendered twice - once hostile, once already-safe - and compared. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: neutralising ESC is the point
+const ESC = /\u001b/g;
+const despatch = (value: string) => value.replace(ESC, " ");
 
 describe("renderWebmcpReport", () => {
 	it("keeps a withheld grade beside a real score, and says why", () => {
@@ -73,7 +88,7 @@ describe("renderWebmcpReport", () => {
 	it("shows na and unmeasured as different things", () => {
 		// The server draws this line deliberately: `na` is not charged, while
 		// `unmeasured` counts against coverage. One "skipped" bucket would erase it.
-		const out = renderWebmcpReport(AUDIT).join("\n");
+		const out = flat(renderWebmcpReport(AUDIT));
 		expect(out).toContain("Not measured");
 		expect(out).toContain("Not applicable");
 	});
@@ -90,9 +105,8 @@ describe("renderWebmcpReport", () => {
 	});
 
 	it("hides passing checks until asked, then lists them", () => {
-		expect(renderWebmcpReport(AUDIT).join("\n")).toMatch(/7 passing \(--show-passing to list\)/);
-		const shown = renderWebmcpReport(AUDIT, { showPassing: true }).join("\n");
-		expect(shown).toContain("Passing (7)");
+		expect(flat(renderWebmcpReport(AUDIT))).toMatch(/passing \(--show-passing to list\)/);
+		expect(flat(renderWebmcpReport(AUDIT, { showPassing: true }))).toMatch(/Passing \(\d+\)/);
 	});
 
 	it("strips terminal control characters out of page-authored text", () => {
@@ -114,11 +128,30 @@ describe("renderWebmcpReport", () => {
 				},
 			],
 		};
-		const out = renderWebmcpReport(hostile).join("\n");
-		expect(out).not.toContain("\u001b[2J");
-		expect(out).not.toContain("\u001b[31m");
-		// The words themselves are still there - this strips control bytes, it does
-		// not rewrite what the server said.
+		// Compared against the SAME payload with the escapes already replaced by
+		// spaces: if the two render identically, the page's control bytes reached
+		// nothing. Asserting "no ESC in the output" instead would be wrong - the
+		// renderer emits its own SGR colour, and whether picocolors is enabled
+		// depends on whether stdout is a TTY, which differs between a local run
+		// and CI.
+		const benign = {
+			...hostile,
+			findings: hostile.findings.map((f) => ({
+				...f,
+				toolName: f.toolName === null ? null : despatch(f.toolName),
+				details: despatch(f.details),
+				evidence: f.evidence === null ? null : despatch(f.evidence),
+			})),
+		};
+		expect(renderWebmcpReport(hostile)).toEqual(renderWebmcpReport(benign));
+
+		// And specifically: the erase-display sequence, which would blank the
+		// report the reader is looking at, never survives.
+		expect(renderWebmcpReport(hostile).join("\n")).not.toContain("\u001b[2J");
+
+		// The words themselves are still there - this strips control bytes, it
+		// does not rewrite what the server said.
+		const out = flat(renderWebmcpReport(hostile));
 		expect(out).toContain("cleared");
 		expect(out).toContain("search");
 	});
