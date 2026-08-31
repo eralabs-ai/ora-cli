@@ -67,7 +67,7 @@ jobs:
       fail-fast: false
       matrix:
         # Floor is package.json `engines.node`; the rest are current LTS/latest.
-        node: ["20", "22", "24"]
+        node: ["22", "24"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -115,6 +115,60 @@ jobs:
       # an unbuilt dist publishes silently and is expensive to discover later.
       - name: Verify publishable tarball
         run: pnpm verify:pack
+
+  # The capture is the only part of this CLI that cannot be tested without a
+  # browser, and it is the part that decides what a site is scored on - so it
+  # gets a job rather than being left to whoever remembers to run it locally.
+  # Unit tests stub the browser by necessity; nothing there would catch a broken
+  # CDP call, a pass that stopped injecting the shim, or a leaked Chrome.
+  capture:
+    name: Capture (real browser)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Chrome ships on the GitHub-hosted Ubuntu image, which is the whole
+      # reason this job is cheap. Fail loudly if that ever stops being true,
+      # rather than silently skipping the tests that need it.
+      - name: Confirm a Chrome is installed
+        run: |
+          command -v google-chrome >/dev/null || {
+            echo "No google-chrome on the runner image; this job cannot test the capture." >&2
+            exit 1
+          }
+          google-chrome --version
+
+      # AX_WEBMCP_NO_SANDBOX is set HERE and nowhere else. Recent Ubuntu images
+      # restrict unprivileged user namespaces, so Chrome's sandbox cannot start
+      # in this container. It stays on for developers, who are pointing a
+      # browser at untrusted pages.
+      - name: Capture against a real Chrome
+        env:
+          AX_WEBMCP_LIVE: "1"
+          AX_WEBMCP_NO_SANDBOX: "1"
+        run: pnpm test:capture
+
+      - name: Build
+        run: pnpm build
+
+      # The bundled binary, a real browser and the mock ingest server end to
+      # end - the one check that exercises the whole chain the way a user does.
+      - name: End-to-end smoke
+        env:
+          AX_WEBMCP_NO_SANDBOX: "1"
+        run: pnpm smoke:webmcp
 
   contract-drift:
     name: Contract drift vs production
