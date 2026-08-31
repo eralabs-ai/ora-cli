@@ -25,7 +25,8 @@
 			"!**/node_modules",
 			"!**/coverage",
 			"!**/.context",
-			"!src/contract/types.gen.ts"
+			"!src/contract/types.gen.ts",
+			"!src/webmcp/vendor"
 		]
 	}
 }

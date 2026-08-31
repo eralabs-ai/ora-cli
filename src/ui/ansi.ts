@@ -37,3 +37,23 @@ export function flow(value: string, max: number): string[] {
  * pulse breathes smoothly at the 80ms tick.
  */
 export const SPINNER_FRAMES = ["◇", "◇", "◈", "◈", "◆", "◆", "◈", "◈"];
+
+/**
+ * Strip terminal control characters from text this process did not author.
+ *
+ * Tool names, descriptions and schemas are third-party page content: a page can
+ * register a tool whose description contains an erase-display sequence and,
+ * printed raw, it clears the reader's screen - or recolors the rest of the
+ * report to hide a failure. `flow` and `squeeze` do not help, because the
+ * whitespace class does not match ESC.
+ *
+ * Every C0 and C1 control character and the DEL become a space; printable text
+ * is untouched, and callers wrap with `flow`, which collapses the runs. This is
+ * NOT a reinterpretation of a payload the server decided (design decision #1):
+ * the words stay verbatim, and only the bytes that drive the terminal rather
+ * than appear in it are dropped.
+ */
+export function plain(value: string): string {
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: removing them is the point
+	return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+}

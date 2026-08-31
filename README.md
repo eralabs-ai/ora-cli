@@ -6,9 +6,10 @@ Score any site's agent readiness — and watch real AI agents navigate it. Power
 npx ax audit https://stripe.com
 ```
 
-Four commands:
+Five commands:
 
 - **`audit <url>`** — run ora's hosted agent-readiness audit against a site: live progress, then a layered report of what passed, what's broken, and ora's ranked list of the highest-impact fixes (or `--json` for the raw contract payload). No account or API key needed. Gate CI with `--min-score`.
+- **`webmcp-audit <url>`** — audit a page's `document.modelContext` tools in a real browser. Works on any http(s) URL, localhost included, so you can check a surface before you publish it. Measures the page the way ora's capture worker does and has ora score it; nothing is stored, published, or ranked.
 - **`deep-journey <url>`** — run a real AI agent at a site on one of ora's curated tasks through the public journey API: no key, no workspace. A partner API key unlocks free-text tasks (`--task`) and a larger allowance.
 - **`journey "<intent>"`** — send a real AI agent (claude-code, codex, …) at a site and watch its navigation live as a boxed node-graph, then get the scored insight, tokens, and cost. Requires an `ORA_API_KEY`.
 - **`skill [name]`** — list, print, or install ora's agent skills, digest-verified from the public registry.
@@ -84,6 +85,94 @@ ax audit localhost:3000 --tunnel-cmd 'ngrok http 3000 --log stdout'
 - The result is stored as **ephemeral**: excluded from ora's rankings and deleted after a few days.
 - Off-site checks (registry listings, brand search) usually fail for a throwaway tunnel hostname — the report says so. Use tunnel audits to iterate on your on-site surface, not to compare scores.
 - Free tiers of some tunnel vendors serve an interstitial warning page to browser-like requests, which can distort what the scanner sees — prefer a vendor/plan that serves your origin directly.
+
+## webmcp-audit
+
+```
+ax webmcp-audit <url> [--chrome-endpoint e] [--min-score n] [--api-key k] [--json] [--show-passing]
+```
+
+```bash
+ax webmcp-audit http://localhost:3000
+```
+
+The dev-loop counterpart to the audit at [webmcp.ora.ai](https://webmcp.ora.ai): check the
+`document.modelContext` tools your page registers *before* you ship it, and get the same answer
+you will get once it is public.
+
+Any `http(s)` URL works — a dev server, a staging host, or a site you do not own. A page with no
+WebMCP surface is not an error: it comes back `absent` with the checks that cannot apply marked
+`Not applicable`, which is a perfectly good way to see what the audit looks like before you have
+written any tools.
+
+**It uses a Chrome you already have.** WebMCP tools only exist inside a live page, so the audit
+opens yours in a real browser. It finds your installed Chrome, starts a headless one on a throwaway
+profile, and stops it when the audit finishes — nothing to set up, and this package never downloads
+or bundles a browser. Set `CHROME_PATH` if yours lives somewhere unusual.
+
+To drive a browser you started yourself, pass `--chrome-endpoint` (a `ws://` URL, an http origin,
+or `host:port`) and start it with `--remote-debugging-port`. The command never attaches to a
+browser you did not name — including anything already on port 9222 — because silently borrowing a
+Chrome with the WebMCP flags on would score your page higher here than it scores on ora.
+
+**Do not enable the WebMCP flags on a Chrome you point it at.** The audit asks whether a real
+browser gives an agent WebMCP on your page. A Chrome started with `--enable-features=WebMCPTesting`
+answers yes for every site, so a page can come back `active` here and `testing-only` on ora. The
+report tells you when the browser answered for the page; where that actually moved a check, ora
+annotates that check itself. Keep a flag-enabled Chrome for
+[`@ora-ai/webmcp-verify`](https://www.npmjs.com/package/@ora-ai/webmcp-verify), which needs the API
+present in order to call your tools.
+
+**What it measures, and where.** The capture is local: three passes over your entry page, the same
+passes and the same probe code ora's worker runs, plus a viewport screenshot at ora's 1280×720. As
+ora does, it loads the page with images, media and webfonts refused — stylesheets still apply — so
+the screenshot the grader sees is the one ora would have taken. That capture is
+posted to ora, which runs the 16 checks, two model hops and the tool-selection simulation, and
+streams back a score. The CLI scores nothing itself (design decision #1) — grade, findings,
+category scores and the simulation are all rendered as ora sent them.
+
+**Availability is a gate, not a score.** Before anything is graded, ora decides whether an
+in-browser agent can use the page at all. A page that cannot comes back `not agent-ready` with the
+reasons why, and no score or grade — the reasons are the answer.
+
+Past that gate the score is four pillars — `shared-experience` (30), `task-completion` (25),
+`tool-quality` (25), `trust` (20). It is **not** the 0–100 agent-readiness score from `ax audit`:
+different inputs, different rubric, never comparable.
+
+A pillar can read 0 because it earned nothing or because nothing in it could be measured; the
+report marks the second case rather than leaving you to guess.
+
+**Two check statuses mean "no score" and are not the same thing.** `Not applicable` means the check
+had nothing to measure and your page is not charged for it. `Not measured` means it applied and
+could not be measured — that counts against evidence coverage, and below the coverage gate ora
+withholds the letter grade while still reporting the score. A withheld grade beside a real score is
+normal, not an error.
+
+**What leaves your machine.** Scoring happens on ora's side, so the capture is uploaded: the page
+URL, every tool your page registers (names, descriptions, JSON Schemas, annotations), the WebMCP
+evidence found in your page's own scripts, and **a 1280×720 screenshot of the page**. Point it at a
+logged-in or seeded dev environment and that screenshot shows whatever was on screen. Your source
+code is never read and never sent.
+
+**Nothing is stored.** A local audit is scored and returned and then forgotten. It never reaches
+the leaderboard, the badge, or your public scorecard — to appear there, publish and run the audit
+on webmcp.ora.ai. Pass `--json` and pipe it to a file if you want to see exactly what was sent
+back; the capture itself is what the report's header describes.
+
+Anonymous use is rate-limited to 10/min and 20 per 24h per IP; an ora API key
+(`--api-key` / `ORA_API_KEY`) lifts that.
+
+### CI gate
+
+```yaml
+- run: npx ax webmcp-audit http://localhost:3000 --min-score 70
+```
+
+Any CI image with Chrome installed works; nothing to launch first.
+
+Exit codes match `audit`: `0` ok · `1` below `--min-score` · `2` usage (including no debuggable
+Chrome) · `3` API. The gate reads the score, not the grade — a withheld grade would otherwise let
+everything through.
 
 ## deep-journey
 
@@ -242,7 +331,8 @@ A `.env` in the working directory is read on startup — copy `.env.example` and
 | `ORA_API_URL` | audit, deep-journey, skill | `https://ora.ai` | Public API base (no auth) |
 | `ORA_PLATFORM_URL` | journey | `https://api.agentfront.sh` | Authenticated platform API base |
 | `ORA_TUNNEL_CMD` | audit | — (optional) | Tunnel command for a local target (same as `--tunnel-cmd`) |
-| `ORA_API_KEY` | journey | — (required) | Secret key (`ora_sk_…`), exchanged for a short-lived bearer token |
+| `ORA_API_URL` | webmcp-audit | `https://ora.ai` | Also the ingest base for `webmcp-audit` |
+| `ORA_API_KEY` | journey, webmcp-audit | — (required for journey) | Secret key (`ora_sk_…`); journey exchanges it for a bearer token, webmcp-audit sends it to lift the ingest rate limits |
 | `ORA_SCAN_API_KEY` | audit, deep-journey | — (optional) | ora-issued scan API key; lifts every scan rate limit (issued manually by ora). deep-journey accepts it as a partner-key fallback |
 | `ORA_PARTNER_API_KEY` | deep-journey | — (optional) | ora-issued partner API key; unlocks `--task` and the 1000/24h keyed allowance |
 
@@ -267,16 +357,38 @@ pnpm lint
 pnpm contract:gen    # regenerate src/contract/ from the served OpenAPI spec
 pnpm build           # tsup → dist/main.cjs (bin) + dist/index.* (library)
 pnpm smoke           # run the built binary the way a user would (needs build)
+pnpm smoke:webmcp    # webmcp-audit end to end: real Chrome + mock ingest (needs build)
 pnpm verify:pack     # check the tarball npm would publish (needs build)
 node dist/main.cjs audit https://example.com
 ```
 
-Manual testing without burning the live scan rate limit:
+`webmcp-audit` is the one command whose core cannot be unit-tested — it needs a browser. Two
+commands cover it, and CI runs both on every PR:
+
+```sh
+AX_WEBMCP_LIVE=1 pnpm test:capture   # the three capture passes against a real Chrome
+pnpm build && pnpm smoke:webmcp      # the whole chain: browser → capture → ingest → report
+```
+
+Both launch their own headless Chrome and stop it again. In a container where Chrome's sandbox
+cannot start, set `AX_WEBMCP_NO_SANDBOX=1` — never on a development machine, since the page being
+audited is untrusted and the sandbox is what contains it.
+
+Manual testing without burning the live rate limits:
 
 ```sh
 node scripts/mock-scan-server.mjs &
 ORA_API_URL=http://localhost:8799 node dist/main.cjs audit https://example.com
 ```
+
+```sh
+node scripts/mock-webmcp-ingest.mjs &
+ORA_API_URL=http://localhost:8798 node dist/main.cjs webmcp-audit http://localhost:3000
+```
+
+The webmcp mock replays the checked-in real ingest fixture, and takes a failure mode as its second
+argument — `shim`, `rate`, `scoring` or `stream` — so every error branch is reachable without the
+live endpoint.
 
 To exercise the published-package experience locally: `npm pack`, then `npx ./ora-ai-ax-<version>.tgz audit https://example.com`, or `pnpm link --global` and use `ax` directly.
 

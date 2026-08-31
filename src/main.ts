@@ -5,6 +5,7 @@ import { auditCommand } from "./commands/audit";
 import { deepJourneyCommand } from "./commands/deep-journey";
 import { journeyCommand } from "./commands/journey";
 import { skillCommand } from "./commands/skill";
+import { webmcpAuditCommand } from "./commands/webmcp-audit";
 import { loadLocalEnv } from "./env";
 
 const NAME = "ax";
@@ -198,6 +199,55 @@ const skill = defineCommand({
 	},
 });
 
+const webmcpAudit = defineCommand({
+	meta: {
+		name: "webmcp-audit",
+		description:
+			"Audit a page's WebMCP tools in a real browser - localhost included, so you can check before you publish (exit codes: 0 ok, 1 below --min-score, 2 usage, 3 API error)",
+	},
+	args: {
+		url: {
+			type: "positional",
+			description: "Page to audit, scheme included (e.g. http://localhost:3000)",
+			required: true,
+		},
+		"chrome-endpoint": {
+			type: "string",
+			description:
+				"Drive a Chrome you started instead of launching one: ws:// URL, http origin, or host:port",
+		},
+		"min-score": {
+			type: "string",
+			description: "Exit 1 when the score is below this threshold (0-100); the CI gate",
+		},
+		"api-key": {
+			type: "string",
+			description: "ora API key that lifts the ingest rate limits; also read from ORA_API_KEY",
+		},
+		json: {
+			type: "boolean",
+			description: "Print the raw ora audit payload as JSON",
+			default: false,
+		},
+		"show-passing": {
+			type: "boolean",
+			description: "List each passing check individually",
+			default: false,
+		},
+	},
+	async run({ args }) {
+		// Same exitCode-over-exit rule as audit: let stdout drain before exiting.
+		process.exitCode = await webmcpAuditCommand({
+			url: args.url as string,
+			json: Boolean(args.json),
+			showPassing: Boolean(args["show-passing"]),
+			minScore: args["min-score"] as string | undefined,
+			chromeEndpoint: args["chrome-endpoint"] as string | undefined,
+			apiKey: args["api-key"] as string | undefined,
+		});
+	},
+});
+
 function helpScreen(): string {
 	const g = pc.green("$");
 	const d = pc.dim;
@@ -208,6 +258,7 @@ function helpScreen(): string {
 		"",
 		`  ${d("Commands:")}`,
 		`    audit ${d("<url>")}         ${d("Score a site's agent readiness")}`,
+		`    webmcp-audit ${d("<url>")}  ${d("Audit a WebMCP surface in a real browser, localhost included")}`,
 		`    deep-journey ${d("<url>")}  ${d("Run a real agent at a site on a curated or free-text task")}`,
 		`    journey ${d("<intent>")}    ${d("Send a real agent at a site and watch it live (workspace)")}`,
 		`    skill ${d("[name]")}        ${d("List, print, or install ora's agent skills")}`,
@@ -216,6 +267,7 @@ function helpScreen(): string {
 		`    ${g} ${NAME} audit https://docs.example.com`,
 		`    ${g} ${NAME} audit https://docs.example.com --min-score 70   ${d("# CI gate")}`,
 		`    ${g} ${NAME} audit https://docs.example.com --json`,
+		`    ${g} ${NAME} webmcp-audit http://localhost:3000`,
 		`    ${g} ${NAME} deep-journey stripe.com --intent pricing`,
 		`    ${g} ${NAME} journey "Find the API docs and how to authenticate" --domain stripe.com`,
 		"",
@@ -231,6 +283,15 @@ function helpScreen(): string {
 		"",
 		`  ${d("audit exit codes:")}`,
 		`    ${d("0 success · 1 below --min-score · 2 usage error · 3 API unreachable/rate-limited")}`,
+		"",
+		`  ${d("webmcp-audit options:")}`,
+		`    --chrome-endpoint ${d("<e>  Drive a Chrome you started: ws:// URL, http origin, or host:port")}`,
+		`    --min-score <n>  ${d("Exit 1 when the score is below n (0-100); the CI gate")}`,
+		`    --api-key <k>    ${d("ora API key that lifts the ingest rate limits; also read from ORA_API_KEY")}`,
+		`    --json           ${d("Print the raw ora audit payload as JSON")}`,
+		`    --show-passing   ${d("List each passing check (hidden by default)")}`,
+		`    ${d("starts a headless Chrome you already have installed; never downloads one")}`,
+		`    ${d("scored by ora, stored nowhere: the result is never published or ranked")}`,
 		"",
 		`  ${d("deep-journey options:")}`,
 		`    --intent <id>    ${d("Curated task id, e.g. pricing, signup, api-docs (server default when omitted)")}`,
@@ -257,7 +318,7 @@ const root = defineCommand({
 		version: pkg.version,
 		description: "Score any site's agent readiness — and watch real AI agents navigate it",
 	},
-	subCommands: { audit, "deep-journey": deepJourney, journey, skill },
+	subCommands: { audit, "webmcp-audit": webmcpAudit, "deep-journey": deepJourney, journey, skill },
 	setup() {
 		// Bare invocation and top-level --help get the curated screen; subcommand
 		// --help stays with citty's generated usage.

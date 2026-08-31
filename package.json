@@ -18,15 +18,17 @@
 	"types": "./dist/index.d.ts",
 	"files": ["dist", ".env.example"],
 	"engines": {
-		"node": ">=20.12.0"
+		"node": ">=22.4.0"
 	},
 	"scripts": {
 		"build": "rm -rf dist && tsup && tsc -p tsconfig.lib.json",
 		"contract:gen": "node scripts/contract-gen.mjs",
 		"smoke": "node scripts/smoke.mjs",
+		"smoke:webmcp": "node scripts/smoke-webmcp.mjs",
 		"verify:pack": "node scripts/verify-pack.mjs",
 		"test": "vitest",
 		"test:ci": "vitest run --coverage",
+		"test:capture": "vitest run src/webmcp/capture.live.test.ts",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
 		"typecheck": "tsc --noEmit",
