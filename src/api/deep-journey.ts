@@ -77,6 +77,12 @@ export interface DeepJourneyOptions {
 	model: string;
 	/** Receives one-line progress updates while the run streams/polls. */
 	progress?: (line: string) => void;
+	/**
+	 * Receives the cumulative trajectory on every `trajectory` frame - the raw
+	 * material the caller redraws the live attribution graph from. Streaming
+	 * only; polling has no per-step frames to hand back.
+	 */
+	onTrajectory?: (steps: JourneyTrajectoryStep[]) => void;
 	/** Base URL override; otherwise $ORA_API_URL, otherwise https://ora.ai. */
 	baseUrl?: string;
 	/** Abort when the stream is silent for this long (default 120s). */
@@ -308,6 +314,7 @@ async function followJourneyStream(
 					const steps = (payload.steps ?? []) as JourneyTrajectoryStep[];
 					const active = steps.filter((s) => s.type === "tool_call").at(-1);
 					options.progress?.(`step ${steps.length} · ${activityLabel(active ?? steps.at(-1))}`);
+					options.onTrajectory?.(steps);
 				} else if (decoded.event === "processing") {
 					options.progress?.(
 						typeof payload.message === "string" ? payload.message : "generating insights…",

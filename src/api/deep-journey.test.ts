@@ -119,6 +119,37 @@ describe("performDeepJourney", () => {
 		expect(lines.some((line) => line.includes("step 1"))).toBe(true);
 	});
 
+	it("hands each trajectory frame's cumulative steps to onTrajectory", async () => {
+		vi.stubGlobal(
+			"fetch",
+			journeyMock({
+				stream: journeyStream([
+					["run_id", { run_id: RUN_ID }],
+					["trajectory", { steps: [{ id: 0, type: "tool_call", action: "fetch" }] }],
+					[
+						"trajectory",
+						{
+							steps: [
+								{ id: 0, type: "tool_call", action: "fetch" },
+								{ id: 1, type: "tool_call", action: "search" },
+							],
+						},
+					],
+					["result", (realDetail as { result: unknown }).result],
+				]),
+			}),
+		);
+
+		const frames: number[] = [];
+		await performDeepJourney("vercel.com", {
+			...OPTIONS,
+			onTrajectory: (steps) => frames.push(steps.length),
+		});
+
+		// One call per trajectory frame, each carrying the cumulative tree.
+		expect(frames).toEqual([1, 2]);
+	});
+
 	it("treats a capped 200 as a cached outcome, not an error", async () => {
 		vi.stubGlobal(
 			"fetch",
