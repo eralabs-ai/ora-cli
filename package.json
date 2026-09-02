@@ -16,10 +16,7 @@
 	},
 	"main": "./dist/index.cjs",
 	"types": "./dist/index.d.ts",
-	"files": [
-		"dist",
-		".env.example"
-	],
+	"files": ["dist", ".env.example"],
 	"engines": {
 		"node": ">=22.4.0"
 	},
@@ -54,10 +51,7 @@
 		"access": "public"
 	},
 	"pnpm": {
-		"onlyBuiltDependencies": [
-			"@biomejs/biome",
-			"esbuild"
-		]
+		"onlyBuiltDependencies": ["@biomejs/biome", "esbuild"]
 	},
 	"license": "MIT",
 	"homepage": "https://ora.ai",
