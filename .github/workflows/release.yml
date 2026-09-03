@@ -37,8 +37,9 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     permissions:
-      contents: write # push the bump commit + tag, create the GitHub Release
+      contents: write # push the tag, create the GitHub Release
       id-token: write # OIDC token for npm provenance attestation
+      pull-requests: write # open the version-bump PR (main is protected — no direct push)
     env:
       # setup-node writes an .npmrc referencing ${NODE_AUTH_TOKEN}, so every npm and
       # pnpm call warns until something defines it. Publishing itself is tokenless
@@ -163,34 +164,57 @@ jobs:
             npm publish --access public --provenance
           fi
 
-      # Push only after npm accepted the publish. npm versions are immutable and
-      # effectively unrecoverable; a local commit and tag cost nothing to discard.
-      # If this step fails, npm has the release and git does not — see RELEASING.md.
-      - name: Commit, tag and push
+      # Tag and land the bump only after npm accepted the publish. npm versions
+      # are immutable and effectively unrecoverable; a tag and a branch cost
+      # nothing to discard if anything here fails.
+      #
+      # This never pushes to main. main is protected: a fresh commit pushed
+      # straight to it arrives with no passing status checks, and one required
+      # check ("Conventional commit title") only ever runs on pull_request — so a
+      # direct push is rejected by construction and the release deadlocks. Instead
+      # we tag the built commit (tags carry no protection rule) and land the
+      # package.json bump the same way every other change lands: a branch + PR.
+      - name: Tag the release and open the version-bump PR
         if: ${{ !inputs.dry_run }}
         env:
           TAG: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Stage everything tracked that changed — the bump plus any formatting the
-          # normalise step applied — so the commit can never be a partial snapshot
-          # of what was just published. .gitignore keeps dist/ and coverage/ out.
-          # `none` leaves the tree untouched, so there is nothing to commit.
+          # main's HEAD, unmodified: the exact commit the published artifact was
+          # built from. The bump lives only in the working tree here (npm version
+          # ran --no-git-tag-version and nothing has committed it yet), so HEAD is
+          # still main. Tag THIS, not the bump commit — the repo squash-merges, so
+          # a bump-commit SHA is rewritten on merge and its tag would be orphaned.
+          MAIN_SHA=$(git rev-parse HEAD)
+          git tag -a "$TAG" -m "Release $TAG" "$MAIN_SHA"
+          git push origin "$TAG"
+
+          # `none` leaves the tree untouched — the published version already lives
+          # in package.json on main, so there is nothing to land.
           if git diff --quiet HEAD; then
-            echo "No changes to commit; tagging current HEAD"
-          else
-            git add -A
-            git commit -m "chore(release): $TAG [skip ci]"
-            echo "Committed:"
-            git show --stat --oneline HEAD | tail -n +2
+            echo "No tree changes (bump=none); tag pushed, nothing to land on main."
+            exit 0
           fi
 
-          git tag -a "$TAG" -m "Release $TAG"
-          git push origin HEAD:main
-          git push origin "$TAG"
+          # The bump plus any formatting the normalise step applied, on a branch a
+          # human merges. Staging everything tracked keeps the commit from ever
+          # being a partial snapshot of what was just published (dist/ and
+          # coverage/ stay out via .gitignore).
+          BRANCH="chore/release-$TAG"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "chore(release): $TAG"
+          echo "Committed:"
+          git show --stat --oneline HEAD | tail -n +2
+          git push origin "$BRANCH"
+
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore(release): $TAG" \
+            --body "Records the \`$TAG\` release already published to npm and tagged at \`$MAIN_SHA\`. Merging updates \`package.json\` on main — bump only, safe to squash-merge."
 
       - name: Create GitHub Release
         if: ${{ !inputs.dry_run }}

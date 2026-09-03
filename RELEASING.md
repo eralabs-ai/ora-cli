@@ -22,8 +22,20 @@ laptop.
    behind quietly routes agents to the API fallback instead of the new CLI.
 
 The workflow lints, typechecks, tests, bumps, builds, smoke-tests the bundled
-binary, publishes to npm with provenance, then commits `chore(release): vX.Y.Z`,
-tags it, and opens a GitHub Release with generated notes.
+binary, publishes to npm with provenance, tags the built commit, opens a GitHub
+Release with generated notes, and opens a `chore(release): vX.Y.Z` PR that lands
+the `package.json` bump on `main`.
+
+**Every release leaves one PR to merge.** The workflow deliberately never pushes
+to `main` — see [Why the bump comes as a PR](#why-the-bump-comes-as-a-pr). npm,
+the tag, and the GitHub Release all land automatically in the run; only the
+one-line `package.json` bump waits on that PR. Merge it (squash) to finish the
+release. The version on npm is live regardless of when the PR merges.
+
+Note the tag points at the commit the artifact was **built from** (main's HEAD at
+dispatch), not at the bump commit — so `vX.Y.Z` and its `package.json` bump are
+one commit apart. This is intentional: the repo squash-merges, which rewrites the
+bump commit's SHA, so tagging it would orphan the tag.
 
 Rehearse anything uncertain with `dry_run` checked: it does every step including
 `npm publish --dry-run`, but publishes nothing, commits nothing, pushes nothing.
@@ -73,27 +85,42 @@ consequences:
 
 ## When something goes wrong
 
-The workflow publishes to npm **before** it pushes to git, on purpose: npm
-versions are immutable and effectively permanent, while a local commit and tag
-cost nothing to throw away. That shapes recovery:
+The workflow publishes to npm **before** it tags or opens the bump PR, on
+purpose: npm versions are immutable and effectively permanent, while a tag and a
+branch cost nothing to throw away. That shapes recovery:
 
-**Failed before or during publish** — nothing was pushed and nothing reached npm.
+**Failed before or during publish** — nothing reached npm and nothing was tagged.
 Fix the cause and re-run. The bump lived only in the runner's working copy.
 
-**Published, but the push failed** — npm has the release and git does not. This
-usually means `main` moved between checkout and push. Reconcile by hand:
+**Published, but tagging or the PR step failed** — npm has the release; the tag,
+the GitHub Release, or the bump PR is missing. Nothing here is destructive to
+redo, and none of it touches `main` directly. Finish by hand — do only the parts
+that are actually missing (check `git ls-remote --tags origin`, `gh release
+list`, and `gh pr list`):
 
 ```sh
-git checkout main && git pull
-npm version <the-published-version> --no-git-tag-version
-git commit -am "chore(release): v<the-published-version>"
-git tag -a "v<the-published-version>" -m "Release v<the-published-version>"
-git push origin main --follow-tags
-gh release create "v<the-published-version>" --generate-notes --verify-tag
+V=<the-published-version>   # e.g. 0.7.2
+
+# 1. Tag the commit the artifact was built from (main's HEAD at release time —
+#    usually current main if it hasn't moved) and the GitHub Release.
+git fetch origin
+git tag -a "v$V" -m "Release v$V" origin/main   # pick the real build SHA if main moved
+git push origin "v$V"
+gh release create "v$V" --title "v$V" --generate-notes --verify-tag
+
+# 2. Land the package.json bump via a PR — a direct push to protected main is
+#    rejected by construction (that is the deadlock this flow exists to avoid).
+git checkout -b "chore/release-v$V" origin/main
+npm version "$V" --no-git-tag-version
+npx biome check --write package.json   # npm version reformats it; Lint fails otherwise
+git commit -am "chore(release): v$V"
+git push -u origin "chore/release-v$V"
+gh pr create --title "chore(release): v$V" --body "Records the v$V release already live on npm."
 ```
 
-Do **not** re-run the Release workflow to fix this — the preflight check will
-correctly refuse, because that version is already on npm.
+Do **not** re-run the Release workflow to fix a stuck release — the preflight
+check will correctly refuse, because that version is already on npm (`403 You
+cannot publish over the previously published versions`).
 
 **Wrong version published** — you cannot reuse or overwrite a version. Publish
 the fix forward under a new version. `npm deprecate` the bad one with a message
@@ -109,13 +136,26 @@ Once the first OIDC-published release lands cleanly:
    two-factor authentication and disallow bypass 2fa tokens*. Only do this
    after OIDC is proven — it kills token-based publishing, fallback included.
 
-## If you protect `main`
+## Why the bump comes as a PR
 
-The release job pushes its bump commit and tag directly to `main` using the
-built-in `GITHUB_TOKEN`. `main` is currently unprotected, so this works as-is.
-If you add branch protection, that push starts failing — grant the exception via
-a bypass allowance for GitHub Actions in the ruleset, or swap the checkout token
-for a PAT that can bypass it.
+`main` is protected: two status checks are required (`ci` and `Conventional
+commit title`), and one of them — `Conventional commit title` — only ever runs on
+`pull_request`. A commit pushed straight to `main` therefore can **never** satisfy
+the ruleset: the required checks run only after the ref updates, which the
+protection won't allow until they pass. So a direct push from the release job is
+rejected by construction and the release deadlocks after the (immutable) npm
+publish. This bit `v0.7.0`, `v0.7.1`, and `v0.7.2`, each reconciled by hand.
+
+The workflow sidesteps it entirely: **tags** carry no protection rule, so the tag
+and GitHub Release push straight through; the `package.json` bump lands through a
+normal PR that runs the required checks and a human merges. Nothing is ever pushed
+to `main` directly.
+
+If you would rather keep everything atomic in one run (tag semantics unchanged,
+no leftover PR), the alternative is to give the release job a **bypass** on the
+branch rule — add a bypass actor for GitHub Actions in the ruleset, or push with a
+GitHub App / PAT that can bypass required checks. That costs a permanent hole in
+the branch protection plus a secret to manage; the PR flow above needs neither.
 
 ## Optional hardening
 
