@@ -55,8 +55,18 @@ const PAGE = `<!doctype html>
   }
 </script></body></html>`;
 
+/**
+ * Ceiling for the setup hook. Vitest's default is 10s, which is fine for the
+ * page server and NOT for launching Chrome on a cold CI runner - measured at
+ * over 10s there, while a warm local machine does it in about two. The `it`
+ * timeouts below do not cover a hook, so this has to be its own.
+ */
+const HOOK_TIMEOUT_MS = 90_000;
+
 describe.skipIf(!LIVE)("captureLocally against a real Chrome", () => {
-	let server: Server;
+	// Both undefined until `beforeAll` finishes. A hook that times out still runs
+	// `afterAll`, so teardown must not assume either exists.
+	let server: Server | undefined;
 	let url: string;
 	let endpoint: BrowserEndpoint;
 	let stopChrome: () => Promise<void> = async () => {};
@@ -69,18 +79,24 @@ describe.skipIf(!LIVE)("captureLocally against a real Chrome", () => {
 			endpoint = chrome.endpoint;
 			stopChrome = chrome.close;
 		}
-		server = createServer((_req, res) => {
+		// Assigned to a local first, so the rest of the hook is not narrowing the
+		// possibly-undefined field it has to leave behind for teardown.
+		const listener = createServer((_req, res) => {
 			res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
 			res.end(PAGE);
 		});
-		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-		url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
-	});
+		server = listener;
+		await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+		url = `http://127.0.0.1:${(listener.address() as { port: number }).port}/`;
+	}, HOOK_TIMEOUT_MS);
 
 	afterAll(async () => {
-		await new Promise((resolve) => server.close(resolve));
+		// Guarded, and the browser is stopped even if the server never started:
+		// throwing here would replace the real failure with a teardown error and
+		// leak a Chrome. `stopChrome` is a no-op until the launch succeeded.
+		if (server) await new Promise((resolve) => server?.close(resolve));
 		await stopChrome();
-	});
+	}, HOOK_TIMEOUT_MS);
 
 	it("finds the tool the page registers, and reports the browser honestly", async () => {
 		const capture = await captureLocally({ url, endpoint });
