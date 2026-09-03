@@ -11,7 +11,14 @@ vi.mock("../api/deep-journey", async (importOriginal) => {
 	return {
 		...real,
 		fetchJourneyIntents: vi.fn(async () => ({
-			intents: [{ id: "pricing", label: "Pricing", hint: "find pricing", template: "" }],
+			intents: [
+				{
+					id: "pricing",
+					label: "Pricing",
+					hint: "find pricing",
+					template: "Find pricing for {domain}.",
+				},
+			],
 			defaultId: "pricing",
 		})),
 		fetchJourneyAgents: vi.fn(async () => ({
@@ -146,6 +153,10 @@ describe("deepJourneyCommand - keyed tier flags", () => {
 		expect(out).toContain("steps");
 		expect(out).toContain("zapier.com/pricing");
 		expect(out).toContain("Let me start at the homepage");
+		// The intent template's {domain} token is substituted with the target at the
+		// graph root — never shown raw.
+		expect(out).toContain("Find pricing for zapier.com.");
+		expect(out).not.toContain("{domain}");
 	});
 
 	it("surfaces run_signals metrics and token/cost in the finale", async () => {
@@ -185,6 +196,18 @@ describe("deepJourneyCommand - keyed tier flags", () => {
 						prior_knowledge_ratio: 0.3,
 						signals_observed: [],
 						journey_layers: ["discovery", "identity", "access"],
+						// v4+ answer signals: 100% of the answer's substance from the site,
+						// 29% of fetched pages fed the final answer.
+						answer_basis: {
+							sections_total: 4,
+							from_site: 4,
+							from_external: 0,
+							from_search: 0,
+							from_memory: 0,
+							site_share: 1,
+							memory_share: 0,
+						},
+						answer_efficiency: 0.29,
 					},
 					// Four fetches: 3 OK + 1 404 (reliability 75%); origins: 2 followed
 					// links, 1 web search, 1 prior knowledge over 4 → on-site 75%.
@@ -241,16 +264,27 @@ describe("deepJourneyCommand - keyed tier flags", () => {
 		expect(out).toContain("14.8k tokens");
 		expect(out).toContain("$0.042");
 		expect(out).toContain("3 searches");
-		// The three canonical journey metrics, computed from the trajectory.
-		expect(out).toContain("on-site discovery");
-		expect(out).toContain("reliability");
-		expect(out).toContain("link following");
-		expect(out).toContain("75%"); // on-site (3/4 non-web-search) and reliability (3/4 OK)
-		expect(out).toContain("50%"); // link following = run_signals.link_following_rate
-		// Reach + layers context from run_signals.
+		// The three answer-quality metrics render as score cards (uppercase labels).
+		expect(out).toContain("ANSWER FROM YOUR SITE");
+		expect(out).toContain("ANSWER EFFICIENCY");
+		expect(out).toContain("FOLLOWED SITE LINKS");
+		expect(out).toContain("100%"); // answer from your site = answer_basis.site_share
+		expect(out).toContain("29%"); // answer efficiency
+		expect(out).toContain("50%"); // followed site links = run_signals.link_following_rate
+		// The default agent is Claude Code on Haiku (not the roster's Sonnet).
+		expect(performDeepJourney).toHaveBeenCalledWith(
+			"zapier.com",
+			expect.objectContaining({ harness: "claude-agent-sdk", model: "claude-haiku-4-5" }),
+		);
+		// The two attribution distributions.
+		expect(out).toContain("answer sources");
+		expect(out).toContain("from this site");
+		expect(out).toContain("url discovery");
+		expect(out).toContain("followed a link");
+		// Reach context from run_signals.
 		expect(out).toContain("reached the site");
-		expect(out).toContain("discovery");
-		expect(out).toContain("access");
+		// The layers line is no longer rendered.
+		expect(out).not.toContain("layers");
 		// The intent-category line and the turns chip are intentionally not shown.
 		expect(out).not.toContain("turns");
 		expect(out).not.toContain("intent signup");

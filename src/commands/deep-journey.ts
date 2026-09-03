@@ -29,6 +29,21 @@ export const EXIT = { OK: 0, RUN_FAILED: 1, USAGE: 2, API: 3 } as const;
 const CAPS_LINE = "public caps: 100 runs/24h per target · 200 runs/24h per IP";
 const KEYED_CAPS_LINE = "keyed caps: 1000 runs/24h per key · no per-target cap";
 
+// The CLI's default agent: Claude Code on Haiku 4.5 - fast and frugal, the right
+// default for a terminal that runs many journeys. The public roster currently
+// headlines Sonnet (its `defaultId` is cas-sonnet), but the engine accepts the
+// claude-agent-sdk + claude-haiku-4-5 pair all the same, so we default to it and
+// add it to the selectable set. `--agent <id>` overrides. Once the roster lists a
+// haiku Claude Code agent of its own, that one is preferred over this constant.
+const DEFAULT_HAIKU_AGENT: JourneyAgentOption = {
+	id: "cas-haiku",
+	label: "Claude Code",
+	variant: "Haiku 4.5",
+	harness: "claude-agent-sdk",
+	model: "claude-haiku-4-5",
+	blurb: "Fast, frugal navigator — the CLI default.",
+};
+
 export interface DeepJourneyCommandInput {
 	url: string;
 	intent?: string;
@@ -135,13 +150,11 @@ function countSearches(result: JourneyRunResult | undefined): number {
 	return (result?.trajectory?.steps ?? []).filter((s) => s.action === "search").length;
 }
 
-// The three canonical journey metrics ora's product shows, computed here from
-// the trajectory exactly as the engine does (run-recap.tsx score helpers):
-//   · on-site discovery = 1 − web-search share of fetches   (green ≥70, amber ≥40)
-//   · reliability       = HTTP-2xx share of non-search fetches (100 green, ≥85 green, ≥60 amber)
-//   · link following    = previous-artifact share of fetches (≡ run_signals.link_following_rate)
-// Each renders only when it has steps to score, so a search-only run omits them
-// rather than printing a fake 0.
+// The three answer-quality metrics the product shows, matched to run-recap.tsx:
+//   · answer from your site  = answer_basis.site_share       (green ≥70, amber ≥40)
+//   · answer efficiency      = answer_efficiency              (green ≥70, amber ≥30)
+//   · followed site links    = link_following_rate            (green ≥70, amber ≥35)
+// Each renders only when the relevant signal is present.
 interface JourneyMetric {
 	label: string;
 	pct: number;
@@ -152,64 +165,118 @@ function tierColor(pct: number, good: number, warn: number): (s: string) => stri
 	return pct >= good ? pc.green : pct >= warn ? pc.yellow : pc.red;
 }
 
-function journeyMetrics(result: JourneyRunResult): JourneyMetric[] {
+function answerMetrics(result: JourneyRunResult): JourneyMetric[] {
+	const sig = result.run_signals;
 	const steps = result.trajectory?.steps ?? [];
-	// Path-origin denominator: fetch / api_call steps (searches excluded).
 	const paths = steps.filter(
 		(s) => s.type === "tool_call" && (s.action === "fetch" || s.action === "api_call"),
 	);
-	// Reliability denominator: any non-search tool call that observed a status.
-	const fetches = steps.filter((s) => s.type === "tool_call" && s.action && s.action !== "search");
 
 	const metrics: JourneyMetric[] = [];
 
-	if (paths.length) {
-		const webSearch =
-			paths.filter((s) => s.attribution?.kind === "web_search").length / paths.length;
-		const pct = Math.round((1 - webSearch) * 100);
-		metrics.push({ label: "on-site discovery", pct, paint: tierColor(pct, 70, 40) });
+	if (sig?.answer_basis != null) {
+		const pct = Math.round(sig.answer_basis.site_share * 100);
+		metrics.push({ label: "answer from your site", pct, paint: tierColor(pct, 70, 40) });
 	}
 
-	if (fetches.length) {
-		const ok = fetches.filter((s) => s.status != null && s.status >= 200 && s.status < 300).length;
-		const pct = Math.round((ok / fetches.length) * 100);
-		metrics.push({
-			label: "reliability",
-			pct,
-			paint: pct === 100 ? pc.green : tierColor(pct, 85, 60),
-		});
+	if (sig?.answer_efficiency != null) {
+		const pct = Math.round(sig.answer_efficiency * 100);
+		metrics.push({ label: "answer efficiency", pct, paint: tierColor(pct, 70, 30) });
 	}
 
 	if (paths.length) {
-		// Prefer the engine's own rate; it is previous_artifact / fetches by definition.
 		const rate =
-			result.run_signals?.link_following_rate ??
+			sig?.link_following_rate ??
 			paths.filter((s) => s.attribution?.kind === "previous_artifact").length / paths.length;
 		const pct = Math.round(rate * 100);
-		metrics.push({ label: "link following", pct, paint: tierColor(pct, 70, 35) });
+		metrics.push({ label: "followed site links", pct, paint: tierColor(pct, 70, 35) });
 	}
 
 	return metrics;
 }
 
-// A labelled 0–100% bar, tinted by the metric's own score tier (the same
-// green/amber/red coding the product's cards use).
-function metricLine(metric: JourneyMetric, cells = 20): string {
+// A labelled 0–100% bar, tinted by the metric's own score tier. The stacked
+// fallback for terminals too narrow to lay the score cards out side by side.
+function metricLine(metric: JourneyMetric, cells = 20, labelW = 21): string {
 	const lit = Math.max(0, Math.min(cells, Math.round((metric.pct / 100) * cells)));
 	const bar = `${metric.paint("▰".repeat(lit))}${pc.dim("▱".repeat(cells - lit))}`;
 	const pct = `${metric.pct}%`.padStart(4);
-	return `  ${pc.dim(metric.label.padEnd(17))}  ${bar}  ${metric.paint(pc.bold(pct))}`;
+	return `  ${pc.dim(metric.label.padEnd(labelW))}  ${bar}  ${metric.paint(pc.bold(pct))}`;
+}
+
+// Center `content` (a plain, un-colored string) in a `width`-wide cell, then
+// tint it. Padding is measured on the raw text and added OUTSIDE the color codes
+// so ANSI escapes never skew the column math (same discipline as ui/ansi).
+function cell(content: string, width: number, paint: (s: string) => string): string {
+	const pad = Math.max(0, width - content.length);
+	const left = Math.floor(pad / 2);
+	return `${" ".repeat(left)}${paint(content)}${" ".repeat(pad - left)}`;
+}
+
+// The headline metrics as a row of score cards (mirrors the product's
+// scorecards): a big tinted percent over a proportional underline rule over the
+// label. Returns null when the terminal is too narrow for one column per metric,
+// so the caller falls back to stacked metricLine bars.
+function metricCards(metrics: JourneyMetric[], wide: number): string[] | null {
+	const n = metrics.length;
+	if (n === 0) return null;
+	const gap = 4;
+	const avail = Math.min(wide, 100) - 2; // 2-space left indent
+	const colW = Math.floor((avail - gap * (n - 1)) / n);
+	if (colW < 18) return null; // too tight to read a card — use the bars instead
+
+	const pctRow: string[] = [];
+	const barRow: string[] = [];
+	const labelRows: string[][] = [];
+	let labelHeight = 1;
+	for (const m of metrics) {
+		pctRow.push(cell(`${m.pct}%`, colW, (s) => m.paint(pc.bold(s))));
+		// A thin underline rule: the tinted portion runs to the score, the rest is
+		// a dim track, framed by one space each side so cards breathe.
+		const barW = colW - 2;
+		const lit = Math.max(1, Math.min(barW, Math.round((m.pct / 100) * barW)));
+		barRow.push(` ${m.paint("▔".repeat(lit))}${pc.dim("▔".repeat(barW - lit))} `);
+		const wrapped = flow(m.label.toUpperCase(), colW).map((line) => cell(line, colW, pc.dim));
+		labelRows.push(wrapped);
+		labelHeight = Math.max(labelHeight, wrapped.length);
+	}
+	const join = (cells: string[]) => `  ${cells.join(" ".repeat(gap))}`;
+	const lines = ["", join(pctRow), join(barRow)];
+	for (let r = 0; r < labelHeight; r++) {
+		lines.push(join(labelRows.map((rows) => rows[r] ?? cell("", colW, pc.dim))));
+	}
+	return lines;
+}
+
+// Distribution rows: label/bar/% for each non-zero bucket. Bar width = share of
+// total items in this distribution (not a 0-100 score, so no tier coloring).
+interface DistBucket {
+	label: string;
+	n: number;
+}
+
+function distLines(title: string, buckets: DistBucket[]): string[] {
+	const present = buckets.filter((b) => b.n > 0);
+	const total = present.reduce((s, b) => s + b.n, 0);
+	if (!present.length || !total) return [];
+	const labelW = Math.max(...present.map((b) => b.label.length));
+	const rows: string[] = ["", `  ${pc.dim(title)}`];
+	for (const b of present) {
+		const pct = Math.round((b.n / total) * 100);
+		const lit = Math.max(0, Math.min(20, Math.round((pct / 100) * 20)));
+		const bar = `${pc.dim("▰".repeat(lit))}${pc.dim("▱".repeat(20 - lit))}`;
+		rows.push(`    ${pc.dim(b.label.padEnd(labelW))}  ${bar}  ${pc.dim(`${pct}%`.padStart(4))}`);
+	}
+	return rows;
 }
 
 function rule(wide: number): string {
 	return pc.dim(`  ${"─".repeat(Math.min(wide - 4, 52))}`);
 }
 
-// The behavioral read of the run: the three canonical journey metrics (derived
-// from the trajectory, so they show on every completed run) plus the reach /
-// intent / layers context from run_signals (experimental, often absent on the
-// keyless tier — each renders only when the server sent it).
-function signalLines(result: JourneyRunResult): string[] {
+// The behavioral read of the run: answer-quality scores plus the two attribution
+// distributions. Reach context from run_signals when present.
+function signalLines(result: JourneyRunResult, wide: number): string[] {
 	const sig = result.run_signals;
 	const rows: string[] = [];
 
@@ -221,17 +288,65 @@ function signalLines(result: JourneyRunResult): string[] {
 		rows.push("", `  ${reach}`);
 	}
 
-	// The three canonical journey metrics, tinted by score tier.
-	const metrics = journeyMetrics(result);
+	// The headline answer-quality metrics: score cards when the terminal is wide
+	// enough, stacked bars otherwise.
+	const metrics = answerMetrics(result);
 	if (metrics.length) {
-		rows.push("");
-		for (const metric of metrics) rows.push(metricLine(metric));
+		const cards = metricCards(metrics, wide);
+		if (cards) {
+			rows.push(...cards);
+		} else {
+			rows.push("");
+			for (const metric of metrics) rows.push(metricLine(metric));
+		}
 	}
 
-	const layers = sig?.journey_layers ?? result.insight?.journey_layers;
-	if (layers?.length) {
-		rows.push("", `  ${pc.dim("layers")}  ${layers.map((l) => pc.bold(l)).join(pc.dim(" › "))}`);
+	// Answer sources: how the answer's substance was composed.
+	const basis = sig?.answer_basis;
+	if (basis && basis.sections_total > 0) {
+		rows.push(
+			...distLines("answer sources", [
+				{ label: "from this site", n: basis.from_site },
+				{ label: "from external pages", n: basis.from_external },
+				{ label: "from search results", n: basis.from_search },
+				{ label: "from agent knowledge", n: basis.from_memory },
+			]),
+		);
 	}
+
+	// URL discovery: how fetched pages were found (matches run-recap.tsx kindOf logic).
+	const steps = result.trajectory?.steps ?? [];
+	const paths = steps.filter(
+		(s) => s.type === "tool_call" && (s.action === "fetch" || s.action === "api_call"),
+	);
+	if (paths.length) {
+		const kindOf = (s: (typeof paths)[number]): string => {
+			const k = s.attribution?.kind;
+			if (k === "previous_step" || k === "previous_artifact") return "previous_artifact";
+			if (k === "web_search") return "web_search";
+			if (
+				k === "prior_knowledge" &&
+				s.anchor_relation === "exact" &&
+				(!s.url_path || s.url_path === "/")
+			)
+				return "task_input";
+			return "prior_knowledge";
+		};
+		const counts: Record<string, number> = {};
+		for (const s of paths) {
+			const k = kindOf(s);
+			counts[k] = (counts[k] ?? 0) + 1;
+		}
+		rows.push(
+			...distLines("url discovery", [
+				{ label: "given in the task", n: counts.task_input ?? 0 },
+				{ label: "followed a link", n: counts.previous_artifact ?? 0 },
+				{ label: "found via web search", n: counts.web_search ?? 0 },
+				{ label: "guessed the URL", n: counts.prior_knowledge ?? 0 },
+			]),
+		);
+	}
+
 	return rows;
 }
 
@@ -257,8 +372,9 @@ function renderOutcome(outcome: DeepJourneyOutcome, url: string): string[] {
 	if (result?.cost_usd != null) chips.push(chipCost(result.cost_usd));
 	if (chips.length) lines.push(`  ${pc.dim(chips.join("  ·  "))}`);
 
-	// Behavioral signals (reach, intent, link-following, layers) when present.
-	if (result) lines.push(...signalLines(result));
+	// Behavioral signals: the answer-quality score cards and attribution
+	// distributions, when the result carries them.
+	if (result) lines.push(...signalLines(result, wide));
 
 	// The generated read, wrapped to width; observations as bullets beneath it.
 	if (result?.insight?.summary) {
@@ -344,13 +460,34 @@ export async function deepJourneyCommand(input: DeepJourneyCommandInput): Promis
 				return EXIT.USAGE;
 			}
 			const chosen = intents.intents.find((option) => option.id === intentId);
-			intentText = chosen?.template || chosen?.hint || chosen?.label || intentId || "journey";
+			// The curated templates carry a literal `{domain}` token the server fills
+			// in when it runs; substitute it here so the graph's root goal reads as a
+			// real sentence ("… Find pricing for stripe.com.") instead of the raw
+			// placeholder.
+			intentText = (
+				chosen?.template ||
+				chosen?.hint ||
+				chosen?.label ||
+				intentId ||
+				"journey"
+			).replace(/\{domain\}/g, target);
 		}
-		const wantedAgent = input.agent ?? agents.defaultId;
-		const found = agents.agents.find((option) => option.id === wantedAgent);
+		// The selectable set: the live roster plus our haiku default (prepended so
+		// it is both the default and resolvable via --agent). A roster that already
+		// carries a haiku Claude Code agent wins - we never shadow it.
+		const rosterHasHaiku = agents.agents.some(
+			(option) => option.harness === "claude-agent-sdk" && /haiku/i.test(option.model),
+		);
+		const roster = rosterHasHaiku ? agents.agents : [DEFAULT_HAIKU_AGENT, ...agents.agents];
+		// Default (no --agent): prefer Claude Code on Haiku over the roster's Sonnet.
+		const preferredDefault =
+			roster.find((option) => option.harness === "claude-agent-sdk" && /haiku/i.test(option.model))
+				?.id ?? agents.defaultId;
+		const wantedAgent = input.agent ?? preferredDefault;
+		const found = roster.find((option) => option.id === wantedAgent);
 		if (!found) {
 			console.error(
-				`ax deep-journey: unknown agent "${wantedAgent}". Available agents:\n${agents.agents
+				`ax deep-journey: unknown agent "${wantedAgent}". Available agents:\n${roster
 					.map((option) => `  ${option.id.padEnd(12)} ${agentLine(option)}`)
 					.join("\n")}`,
 			);

@@ -1789,6 +1789,19 @@ export interface components {
         };
         /** @description Journey-taxonomy layers (5), distinct from the audit report's 4 scoring layers. Falls back to insight.journey_layers on v1/v2 signals; absent when the run was never classified. */
         journey_layers?: ("discovery" | "identity" | "access" | "payments" | "experience")[];
+        /** @description v4+: answer composition by source type (judge-tagged sections) */
+        answer_basis?: {
+          sections_total: number;
+          from_site: number;
+          from_external: number;
+          from_search: number;
+          from_memory: number;
+          /** @description 0..1 share of answer substance that came from the target site */
+          site_share: number;
+          memory_share: number;
+        };
+        /** @description v4+: share of fetched pages that contributed to the final answer (0..1) */
+        answer_efficiency?: number | null;
       };
     };
     JourneyTrajectoryStep: {
