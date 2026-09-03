@@ -61,6 +61,11 @@ describe.skipIf(!LIVE)("captureLocally against a real Chrome", () => {
 	let endpoint: BrowserEndpoint;
 	let stopChrome: () => Promise<void> = async () => {};
 
+	// Launching a real Chrome is the slow part of setup: a cold CI runner routinely
+	// takes longer than vitest's 10s default hook timeout, which fired mid-launch
+	// and left `server` unassigned (so afterAll then threw on `server.close`). Give
+	// the hook the same 90s budget the tests get, and guard teardown against a
+	// setup that bailed before it built either resource.
 	beforeAll(async () => {
 		if (ENDPOINT) {
 			endpoint = await discoverEndpoint(ENDPOINT);
@@ -75,12 +80,12 @@ describe.skipIf(!LIVE)("captureLocally against a real Chrome", () => {
 		});
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
-	});
+	}, 90_000);
 
 	afterAll(async () => {
-		await new Promise((resolve) => server.close(resolve));
+		if (server) await new Promise((resolve) => server.close(resolve));
 		await stopChrome();
-	});
+	}, 90_000);
 
 	it("finds the tool the page registers, and reports the browser honestly", async () => {
 		const capture = await captureLocally({ url, endpoint });
