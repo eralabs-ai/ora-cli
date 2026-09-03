@@ -129,7 +129,8 @@ const deepJourney = defineCommand({
 		},
 		agent: {
 			type: "string",
-			description: "Agent id from the public roster (see GET /api/journey/agents)",
+			description:
+				"Agent id (see GET /api/journey/agents); defaults to cas-haiku (Claude Code · Haiku 4.5)",
 		},
 		json: {
 			type: "boolean",
@@ -297,7 +298,7 @@ function helpScreen(): string {
 		`    --intent <id>    ${d("Curated task id, e.g. pricing, signup, api-docs (server default when omitted)")}`,
 		`    --task <text>    ${d("Free-text task (needs a partner API key; replaces --intent)")}`,
 		`    --api-key <k>    ${d("ora partner API key: unlocks --task + 1000 runs/24h; also read from ORA_PARTNER_API_KEY")}`,
-		`    --agent <id>     ${d("Agent from the public roster (default: ora's pick)")}`,
+		`    --agent <id>     ${d("Agent to run (default: cas-haiku — Claude Code · Haiku 4.5)")}`,
 		`    --no-stream      ${d("Poll for the result instead of streaming the trajectory")}`,
 		`    --json           ${d("Print the terminal run detail as JSON")}`,
 		`    ${d("no key needed · public caps: 100 runs/24h per target, 200 runs/24h per IP")}`,

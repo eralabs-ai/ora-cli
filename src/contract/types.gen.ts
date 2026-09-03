@@ -429,7 +429,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a response-envelope break - a stable field removed, renamed, or changed in meaning, or the default response format flipping - and is safe to pin. Additive changes and check-catalog membership changes ship on a minor. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.23.0";
+      contractVersion: "1.24.0";
       /**
        * @description Present only when this body is a stored result served by the freshness gate instead of a fresh scan. Absent on a live scan.
        * @enum {boolean}
@@ -628,7 +628,7 @@ export interface components {
        * @description The contract version this payload conforms to. SemVer: a major means a response-envelope break - a stable field removed, renamed, or changed in meaning, or the default response format flipping - and is safe to pin. Additive changes and check-catalog membership changes ship on a minor. See docs/api.md -> Contract and versioning.
        * @enum {string}
        */
-      contractVersion: "1.23.0";
+      contractVersion: "1.24.0";
       /** @description Wall-clock duration of the scan that produced this stored result */
       durationMs: number | null;
       /**
@@ -672,7 +672,7 @@ export interface components {
        * @description The contract version this catalog conforms to - identical to the OpenAPI info.version and the MCP server version. SemVer: a major means a response-envelope break (a stable field, or a layer id, removed or renamed or changed in meaning, or the default response format flipping) and is safe to pin; check-catalog membership changes ship on a minor. The full versioning policy is published in the API description at /api/openapi.json.
        * @enum {string}
        */
-      contractVersion: "1.23.0";
+      contractVersion: "1.24.0";
       /** @description The four scored layers in scoring order, with display name and current weight. */
       layers: {
           /** @description Stable layer id: discovery, accessibility, usability, or payments. Removing or renaming a layer id is a major version change. Note one intentional divergence: the id 'accessibility' carries the display name 'Access'. */
@@ -771,7 +771,7 @@ export interface components {
        * @description The contract version this response conforms to - identical to the OpenAPI info.version and the MCP server version. The full versioning policy is published in the API description at /api/openapi.json.
        * @enum {string}
        */
-      contractVersion: "1.23.0";
+      contractVersion: "1.24.0";
       /** @description The apex domain derived from the requested URL. */
       domain: string;
       /** @description The normalized URL the run targeted. */
@@ -1125,7 +1125,7 @@ export interface components {
         };
         /** @description Flat per-run signal summary. Experimental; absent on legacy runs. */
         run_signals?: {
-          /** @description run_signals contract version (3 = current) */
+          /** @description run_signals contract version (4 = current; answer_grounding/answer_efficiency present from v4) */
           version: number;
           /** @description Engine-classified intent category */
           intent_category: string;
@@ -1183,6 +1183,33 @@ export interface components {
               artifact_key?: string;
               page_role?: string;
             };
+          };
+          /** @description Answer grounding: how much of the answer is based on the target site itself. Derived from the judge's answer-source steps. Added in run_signals v4. */
+          answer_grounding?: {
+            /** @description Share of the answer's sources that are pages on the target site (0..1); null when no graded sources */
+            on_site_ratio: number | null;
+            sources_total: number;
+            on_site: number;
+            third_party: number;
+            /** @description External hosts the answer was built from */
+            third_party_hosts: string[];
+          };
+          /** @description Share of the run's fetches that fed the answer (0..1). Added in run_signals v4. */
+          answer_efficiency?: number | null;
+          /** @description Judge-tagged answer-section source counts. Added in run_signals v4. */
+          answer_basis?: {
+            sections_total: number;
+            /** @description Sections carried by fetched pages on the target site */
+            from_site: number;
+            /** @description Sections carried by fetched third-party pages */
+            from_external: number;
+            /** @description Sections carried only by search-result snippets */
+            from_search: number;
+            from_memory: number;
+            /** @description Share of answer sections whose substance came from the target site's own pages (0..1) — the headline 'answer from your site' metric */
+            site_share: number;
+            /** @description Share of answer sections whose substance came from the model's own knowledge rather than retrieved material (0..1) */
+            memory_share: number;
           };
           /** @description Journey-taxonomy layers (5), distinct from the audit report's 4 scoring layers. Falls back to insight.journey_layers on v1/v2 signals; absent when the run was never classified. */
           journey_layers?: ("discovery" | "identity" | "access" | "payments" | "experience")[];
@@ -1385,7 +1412,7 @@ export interface components {
         };
         /** @description Flat per-run signal summary. Experimental; absent on legacy runs. */
         run_signals?: {
-          /** @description run_signals contract version (3 = current) */
+          /** @description run_signals contract version (4 = current; answer_grounding/answer_efficiency present from v4) */
           version: number;
           /** @description Engine-classified intent category */
           intent_category: string;
@@ -1443,6 +1470,33 @@ export interface components {
               artifact_key?: string;
               page_role?: string;
             };
+          };
+          /** @description Answer grounding: how much of the answer is based on the target site itself. Derived from the judge's answer-source steps. Added in run_signals v4. */
+          answer_grounding?: {
+            /** @description Share of the answer's sources that are pages on the target site (0..1); null when no graded sources */
+            on_site_ratio: number | null;
+            sources_total: number;
+            on_site: number;
+            third_party: number;
+            /** @description External hosts the answer was built from */
+            third_party_hosts: string[];
+          };
+          /** @description Share of the run's fetches that fed the answer (0..1). Added in run_signals v4. */
+          answer_efficiency?: number | null;
+          /** @description Judge-tagged answer-section source counts. Added in run_signals v4. */
+          answer_basis?: {
+            sections_total: number;
+            /** @description Sections carried by fetched pages on the target site */
+            from_site: number;
+            /** @description Sections carried by fetched third-party pages */
+            from_external: number;
+            /** @description Sections carried only by search-result snippets */
+            from_search: number;
+            from_memory: number;
+            /** @description Share of answer sections whose substance came from the target site's own pages (0..1) — the headline 'answer from your site' metric */
+            site_share: number;
+            /** @description Share of answer sections whose substance came from the model's own knowledge rather than retrieved material (0..1) */
+            memory_share: number;
           };
           /** @description Journey-taxonomy layers (5), distinct from the audit report's 4 scoring layers. Falls back to insight.journey_layers on v1/v2 signals; absent when the run was never classified. */
           journey_layers?: ("discovery" | "identity" | "access" | "payments" | "experience")[];
@@ -1728,7 +1782,7 @@ export interface components {
       };
       /** @description Flat per-run signal summary. Experimental; absent on legacy runs. */
       run_signals?: {
-        /** @description run_signals contract version (3 = current) */
+        /** @description run_signals contract version (4 = current; answer_grounding/answer_efficiency present from v4) */
         version: number;
         /** @description Engine-classified intent category */
         intent_category: string;
@@ -1786,6 +1840,33 @@ export interface components {
             artifact_key?: string;
             page_role?: string;
           };
+        };
+        /** @description Answer grounding: how much of the answer is based on the target site itself. Derived from the judge's answer-source steps. Added in run_signals v4. */
+        answer_grounding?: {
+          /** @description Share of the answer's sources that are pages on the target site (0..1); null when no graded sources */
+          on_site_ratio: number | null;
+          sources_total: number;
+          on_site: number;
+          third_party: number;
+          /** @description External hosts the answer was built from */
+          third_party_hosts: string[];
+        };
+        /** @description Share of the run's fetches that fed the answer (0..1). Added in run_signals v4. */
+        answer_efficiency?: number | null;
+        /** @description Judge-tagged answer-section source counts. Added in run_signals v4. */
+        answer_basis?: {
+          sections_total: number;
+          /** @description Sections carried by fetched pages on the target site */
+          from_site: number;
+          /** @description Sections carried by fetched third-party pages */
+          from_external: number;
+          /** @description Sections carried only by search-result snippets */
+          from_search: number;
+          from_memory: number;
+          /** @description Share of answer sections whose substance came from the target site's own pages (0..1) — the headline 'answer from your site' metric */
+          site_share: number;
+          /** @description Share of answer sections whose substance came from the model's own knowledge rather than retrieved material (0..1) */
+          memory_share: number;
         };
         /** @description Journey-taxonomy layers (5), distinct from the audit report's 4 scoring layers. Falls back to insight.journey_layers on v1/v2 signals; absent when the run was never classified. */
         journey_layers?: ("discovery" | "identity" | "access" | "payments" | "experience")[];
@@ -2982,7 +3063,7 @@ export interface operations {
              * @description Curated intent to execute (GET /api/journey/intents lists them with labels)
              * @enum {string}
              */
-            intent_id: "pricing" | "signup" | "api-docs" | "integrate" | "support" | "evaluate" | "discover-trust" | "agent-access" | "understand-offering" | "find-integration" | "inspect-integration" | "production-readiness" | "authenticate" | "transact" | "act-for-user" | "operate-site";
+            intent_id: "pricing" | "integrate" | "api-docs" | "signup" | "support" | "evaluate" | "discover-trust" | "agent-access" | "understand-offering" | "find-integration" | "inspect-integration" | "production-readiness" | "authenticate" | "transact" | "act-for-user" | "operate-site";
             /**
              * @description Target domain (e.g. stripe.com). Validated like a scan target: IP literals, localhost, and malformed hosts are rejected with code INVALID_DOMAIN.
              * @example stripe.com
