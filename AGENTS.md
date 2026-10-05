@@ -23,7 +23,7 @@ How coding agents should work in this repo. The README covers usage; this file c
 
 ## Pull request descriptions
 
-Every PR body opens with one paragraph of 3-4 plain sentences saying what the PR does, written under the PR template's `## What` heading (the first section) rather than a second heading. Write it for a human reviewer who has not seen the conversation, the issue, or the code: what changed, why it was needed, and what a CLI user or script will notice afterwards. Name the concrete things (the command, the flag, the exit code, the contract field) rather than abstractions, and leave implementation detail to the sections below it. This holds for every PR an agent opens or rewrites, small ones included.
+Every PR body opens with one paragraph of 3-4 plain sentences saying what the PR does, written under the PR template's `## What` heading (the first section) rather than a second heading. Write it for a human reviewer who has not seen the conversation, the issue, or the code: what changed, why it was needed, and what a CLI user or script will notice afterwards. Name the concrete things (the command, the flag, the exit code, the contract field) rather than abstractions, and leave implementation detail to the sections below it. The paragraph must match the diff: describe only what the code actually changes, and rewrite it whenever later commits change what the PR does. This holds for every PR an agent opens or rewrites, small ones included.
 
 ## Verification
 
