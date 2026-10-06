@@ -233,7 +233,7 @@ Anonymous callers run curated intents (`pricing`, `signup`, `api-docs`, `integra
 
 **Keyed tier:** an ora-issued partner API key (`--api-key`, or `ORA_PARTNER_API_KEY` / `ORA_SCAN_API_KEY` in the environment) unlocks `--task` — a free-text task of 4–300 characters that replaces the curated intent — and moves the caller to an allowance of 1000 runs per rolling 24h per key with no per-target cap and no burst guard. Keys are issued manually by ora (no self-serve signup). A wrong or unrecognized key with a *curated* intent silently degrades to the anonymous tier; `--task` without a recognized key is an error.
 
-If the live stream goes quiet (no frames for 120s) the CLI does not abandon the run — it switches to polling the run detail until the server reports a terminal state.
+The CLI always follows the run's stream to the end, `--no-stream` included, because ora saves a finished run from inside the stream. If the stream drops or goes quiet (no frames for 120s), the CLI reopens it, which resumes the same run without re-running the agent. A stream `429` is waited out (up to 60s) before reopening, and a `404` or auth error ends the command at once. Only after five failed reopens does it fall back to polling the run detail, within a 15-minute budget shared with the stream.
 
 | Flag | Effect |
 |---|---|
@@ -241,7 +241,7 @@ If the live stream goes quiet (no frames for 120s) the CLI does not abandon the 
 | `--task <text>` | Free-text task — needs a partner API key; mutually exclusive with `--intent` |
 | `--api-key <k>` | ora partner API key; also read from `ORA_PARTNER_API_KEY` (then `ORA_SCAN_API_KEY`) |
 | `--agent <id>` | Agent from the public roster (default: ora's pick) |
-| `--no-stream` | Poll for the result instead of streaming the trajectory |
+| `--no-stream` | Hide the live trajectory view and print only the final result |
 | `--json` | Print the terminal run detail (verdict, step_count, result) as JSON |
 
 deep-journey exit codes: `0` run succeeded (any verdict) · `1` run failed · `2` usage error · `3` API unreachable / rate-limited.

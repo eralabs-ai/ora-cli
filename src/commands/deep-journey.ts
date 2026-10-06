@@ -503,9 +503,10 @@ export async function deepJourneyCommand(input: DeepJourneyCommandInput): Promis
 	}
 
 	// The live attribution graph draws itself from the streamed trajectory, so
-	// it only lights up when we're both on a TTY and actually streaming. With
-	// --no-stream (no per-step frames) or a bare pipe, we fall back to the
-	// one-line spinner and let the terminal graph print once at the end.
+	// it only lights up on a TTY without --no-stream. With --no-stream (the run
+	// is still streamed; only the step count reaches the spinner) or a bare
+	// pipe, we fall back to the one-line spinner and let the terminal graph
+	// print once at the end.
 	const live = interactive && !input.noStream;
 	const panel = new LivePanel();
 	let steps: JourneyStep[] = [];

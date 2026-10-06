@@ -155,7 +155,7 @@ const deepJourney = defineCommand({
 		},
 		"no-stream": {
 			type: "boolean",
-			description: "Skip the live trajectory stream and poll for the result instead",
+			description: "Hide the live trajectory view and print only the final result",
 			default: false,
 		},
 	},
@@ -307,7 +307,7 @@ function helpScreen(): string {
 		`    --task <text>    ${d("Free-text task (needs a partner API key; replaces --intent)")}`,
 		`    --api-key <k>    ${d("ora partner API key: unlocks --task + 1000 runs/24h; also read from ORA_PARTNER_API_KEY")}`,
 		`    --agent <id>     ${d("Agent to run (default: cas-haiku — Claude Code · Haiku 4.5)")}`,
-		`    --no-stream      ${d("Poll for the result instead of streaming the trajectory")}`,
+		`    --no-stream      ${d("Hide the live trajectory view and print only the final result")}`,
 		`    --json           ${d("Print the terminal run detail as JSON")}`,
 		`    ${d("no key needed · public caps: 100 runs/24h per target, 20 runs/24h per IP")}`,
 		"",

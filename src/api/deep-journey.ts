@@ -26,10 +26,33 @@ const PUBLIC_BASE = "https://ora.ai";
 // least every few seconds while it works; this bounds SILENCE, not the run.
 const STREAM_IDLE_MS = 120_000;
 const POLL_EVERY_MS = 5_000;
-const POLL_LIMIT = 180; // ≈15min of --no-stream patience, matching the server's run ceiling
+const POLL_LIMIT = 180;
+// One budget for following a run, streaming and polling together, matching
+// the server's run ceiling: a run nobody streams cannot finish, so time spent
+// polling after the stream failed is mostly spent waiting for nothing.
+const FOLLOW_BUDGET_MS = 15 * 60_000;
+// Longest Retry-After a 429 on the stream is waited out before a reopen.
+const MAX_RETRY_AFTER_MS = 60_000;
+// ora saves a run's terminal status only from inside the stream route, so a
+// run nobody streams to the end stays "running" forever. A dropped stream is
+// reopened rather than abandoned: reopening resumes the same run server-side
+// and never re-executes the agent.
+const STREAM_REOPENS = 5;
+const STREAM_REOPEN_PAUSE_MS = 2_000;
 
 /** Any failure to obtain a run from ora: network, HTTP, rate limit, stream error. */
 export class DeepJourneyApiError extends Error {}
+
+/** The stream answered with an HTTP error rather than an event stream. */
+class JourneyStreamHttpError extends DeepJourneyApiError {
+	constructor(
+		message: string,
+		readonly status: number,
+		readonly retryAfterMs: number | undefined,
+	) {
+		super(message);
+	}
+}
 
 export interface JourneyIntentOption {
 	id: string;
@@ -87,8 +110,16 @@ export interface DeepJourneyOptions {
 	baseUrl?: string;
 	/** Abort when the stream is silent for this long (default 120s). */
 	idleMs?: number;
-	/** Skip the SSE and poll GET /api/journey/runs/{id} instead. */
+	/**
+	 * No live view: `onTrajectory` is never called. The run is still followed
+	 * over the stream, because the stream is what saves the finished run.
+	 */
 	noStream?: boolean;
+	/** Pause between stream reopens after a drop (default 2s). */
+	reopenPauseMs?: number;
+	/** Total time to follow a running run, streaming plus polling (default 15min). */
+	followBudgetMs?: number;
+	/** Detail polling, the last resort once every stream reopen has failed. */
 	pollEveryMs?: number;
 	pollLimit?: number;
 }
@@ -273,7 +304,12 @@ async function followJourneyStream(
 	let res: Response;
 	try {
 		res = await fetch(target, {
-			headers: { accept: "text/event-stream" },
+			headers: {
+				accept: "text/event-stream",
+				// A recognized key lifts the stream's per-IP limit on a run that
+				// already exists, which reopening after a drop relies on.
+				...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}),
+			},
 			signal: dog.signal,
 		});
 	} catch (cause) {
@@ -284,7 +320,12 @@ async function followJourneyStream(
 	}
 	if (!res.ok || !res.body) {
 		dog.disarm();
-		throw new DeepJourneyApiError(`ora journey stream failed: ${await errorBodyText(res)}`);
+		const retryAfterS = Number(res.headers.get("retry-after"));
+		throw new JourneyStreamHttpError(
+			`ora journey stream failed (${res.status}): ${await errorBodyText(res)}`,
+			res.status,
+			Number.isFinite(retryAfterS) && retryAfterS > 0 ? retryAfterS * 1000 : undefined,
+		);
 	}
 
 	const utf8 = new TextDecoder();
@@ -342,6 +383,43 @@ async function followJourneyStream(
 	return collected;
 }
 
+/**
+ * Follow the stream to its terminal frame, reopening it when it drops or
+ * closes early. Returns the stream's error message for a failed run, or
+ * `undefined` once a result arrived. Throws when every reopen failed.
+ */
+async function streamToEnd(
+	base: string,
+	streamPath: string,
+	options: DeepJourneyOptions,
+	deadline: number,
+): Promise<string | undefined> {
+	const pauseMs = options.reopenPauseMs ?? STREAM_REOPEN_PAUSE_MS;
+	let lastFailure: unknown;
+	let waitMs = 0;
+	for (let attempt = 0; attempt <= STREAM_REOPENS && Date.now() < deadline; attempt++) {
+		if (attempt > 0) {
+			options.progress?.("stream dropped — reopening");
+			await pause(waitMs);
+		}
+		waitMs = pauseMs;
+		try {
+			const streamed = await followJourneyStream(base, streamPath, options);
+			if (streamed.result || streamed.errorMessage) return streamed.errorMessage;
+			lastFailure = new DeepJourneyApiError("ora journey stream closed before the run ended");
+		} catch (cause) {
+			lastFailure = cause;
+			if (cause instanceof JourneyStreamHttpError) {
+				// Only a rate limit is worth reopening for, after its window; a
+				// 404 or an auth refusal answers the same way every time.
+				if (cause.status !== 429) throw cause;
+				waitMs = Math.min(cause.retryAfterMs ?? pauseMs, MAX_RETRY_AFTER_MS);
+			}
+		}
+	}
+	throw lastFailure ?? new DeepJourneyApiError("ora journey stream was never opened");
+}
+
 /** Non-streaming run detail (verdict, step_count, result once succeeded). */
 export function fetchRunDetail(base: string, runId: string): Promise<JourneyRunDetail> {
 	return getJson<JourneyRunDetail>(`${base}/api/journey/runs/${encodeURIComponent(runId)}`);
@@ -351,11 +429,16 @@ async function awaitByPolling(
 	base: string,
 	runId: string,
 	options: DeepJourneyOptions,
+	deadline: number,
 ): Promise<JourneyRunDetail> {
 	const every = options.pollEveryMs ?? POLL_EVERY_MS;
 	const limit = options.pollLimit ?? POLL_LIMIT;
 	let latest = await fetchRunDetail(base, runId);
-	for (let round = 0; round < limit && latest.status === "running"; round++) {
+	for (
+		let round = 0;
+		round < limit && latest.status === "running" && Date.now() < deadline;
+		round++
+	) {
 		options.progress?.("agent working… (polling)");
 		await pause(every);
 		try {
@@ -369,8 +452,8 @@ async function awaitByPolling(
 
 /**
  * Run a deep journey against `target` and resolve with the terminal detail.
- * Streams the trajectory by default (progress lines via `options.progress`);
- * with `noStream`, polls the record instead. A per-target-capped trigger is
+ * Follows a running run's stream to its terminal frame (progress lines via
+ * `options.progress`); `noStream` only withholds `onTrajectory`. A per-target-capped trigger is
  * NOT an error: ora answers with the most recent stored run for that target,
  * and the outcome carries `cached: true` plus `retryAfterMs`.
  */
@@ -397,27 +480,30 @@ export async function performDeepJourney(
 	}
 
 	// A cached record can still be "running" (the latest run is mid-flight);
-	// live streaming attaches to it the same way a fresh run does.
+	// the stream attaches to it the same way it does to a fresh run. Every
+	// running record is streamed, --no-stream included: only the stream route
+	// saves the terminal status, so polling alone would watch "running" until
+	// the poll budget ran out.
 	let engineError: string | undefined;
-	if (!options.noStream && record.status === "running") {
+	let streamFailure: string | undefined;
+	if (record.status === "running") {
+		const deadline = Date.now() + (options.followBudgetMs ?? FOLLOW_BUDGET_MS);
+		const streamOptions = options.noStream ? { ...options, onTrajectory: undefined } : options;
 		try {
-			const streamed = await followJourneyStream(base, record.stream_url, options);
 			// A terminal `error` frame means the run failed - NOT a client failure.
-			// Fall through to the detail so a failed run resolves the same way it
-			// does under --no-stream (status "failed" -> the caller's run-failed
-			// path), keeping exit codes consistent across both modes.
-			engineError = streamed.errorMessage;
-		} catch {
-			// The stream is a live view, not the run: a quiet or broken SSE (idle
-			// timeout, transport reset) must never abandon a run that is still
-			// executing - and still billing - server-side. Degrade to polling the
-			// detail; if the run really is stuck, the still-running guard below
-			// reports it after the poll budget.
-			options.progress?.("stream went quiet — switching to polling");
-			await awaitByPolling(base, record.id, options);
+			// Fall through to the detail so a failed run resolves through status
+			// "failed" -> the caller's run-failed path, like any other failure.
+			engineError = await streamToEnd(base, record.stream_url, streamOptions, deadline);
+		} catch (cause) {
+			if (cause instanceof JourneyStreamHttpError && cause.status !== 429) throw cause;
+			// Every reopen failed (the network, a proxy that strips SSE, a rate
+			// limit that outlasted the reopens). The run may still finish if
+			// anything else streams it, so poll the detail for what is left of
+			// the budget; the still-running guard below reports it otherwise.
+			streamFailure = cause instanceof Error ? cause.message : String(cause);
+			options.progress?.(`stream unavailable (${streamFailure}) — polling`);
+			await awaitByPolling(base, record.id, options, deadline);
 		}
-	} else if (options.noStream && record.status === "running") {
-		await awaitByPolling(base, record.id, options);
 	}
 
 	// The detail is the terminal source of truth: verdict + step_count +
@@ -432,8 +518,10 @@ export async function performDeepJourney(
 			throw new DeepJourneyApiError(`ora journey run failed: ${engineError}`);
 		}
 		throw new DeepJourneyApiError(
-			`run ${record.id} is still executing — the ${
-				options.noStream ? "poll budget ran out" : "stream ended"
+			`run ${record.id} is still executing — ${
+				streamFailure
+					? `the stream could not be followed (${streamFailure}) and polling ran out of time`
+					: "the stream ended"
 			} before a terminal result. Check ${base}/api/journey/runs/${record.id} shortly`,
 		);
 	}
