@@ -239,7 +239,7 @@ async function triggerRun(
 		const wait = res.headers.get("retry-after");
 		const caps = options.apiKey
 			? "keyed allowance: 1000 runs per 24h per key"
-			: "burst: 20/min/IP; daily: 200 runs per 24h per IP — an ora partner API key raises this to 1000/24h per key: set ORA_PARTNER_API_KEY or pass --api-key";
+			: "burst: 20/min/IP; daily: 20 runs per 24h per IP — an ora partner API key raises this to 1000/24h per key: set ORA_PARTNER_API_KEY or pass --api-key";
 		throw new DeepJourneyApiError(
 			`ora journey caller limit exceeded${wait ? ` — retry after ${formatWait(Number(wait) * 1000)}` : ""} (${caps})`,
 		);
