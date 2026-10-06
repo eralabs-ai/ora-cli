@@ -309,7 +309,7 @@ function helpScreen(): string {
 		`    --agent <id>     ${d("Agent to run (default: cas-haiku — Claude Code · Haiku 4.5)")}`,
 		`    --no-stream      ${d("Poll for the result instead of streaming the trajectory")}`,
 		`    --json           ${d("Print the terminal run detail as JSON")}`,
-		`    ${d("no key needed · public caps: 100 runs/24h per target, 200 runs/24h per IP")}`,
+		`    ${d("no key needed · public caps: 100 runs/24h per target, 20 runs/24h per IP")}`,
 		"",
 		`  ${d("journey options:")}`,
 		`    --domain <d>     ${d("Site the agent targets (e.g. stripe.com)")}`,

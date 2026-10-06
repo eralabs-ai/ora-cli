@@ -26,7 +26,7 @@ export const EXIT = { OK: 0, RUN_FAILED: 1, USAGE: 2, API: 3 } as const;
 // spending one. The live remaining allowance comes from the response headers
 // after the trigger. One line per tier - which one the caller is on is known
 // locally (key present or not).
-const CAPS_LINE = "public caps: 100 runs/24h per target · 200 runs/24h per IP";
+const CAPS_LINE = "public caps: 100 runs/24h per target · 20 runs/24h per IP";
 const KEYED_CAPS_LINE = "keyed caps: 1000 runs/24h per key · no per-target cap";
 
 // The CLI's default agent: Claude Code on Haiku 4.5 - fast and frugal, the right
