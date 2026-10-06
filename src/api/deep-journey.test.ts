@@ -243,7 +243,7 @@ describe("performDeepJourney", () => {
 			await vi.advanceTimersByTimeAsync(10_000);
 			const error = await settled;
 			expect(error).toBeInstanceOf(DeepJourneyApiError);
-			expect(String(error)).toMatch(/still executing/);
+			expect(String(error)).toMatch(/still executing — the stream could not be followed/);
 		} finally {
 			vi.useRealTimers();
 		}
@@ -271,6 +271,49 @@ describe("performDeepJourney", () => {
 		expect(outcome.detail.status).toBe("succeeded");
 		expect(mock.mock.calls.some(([url]) => String(url).endsWith("/stream"))).toBe(true);
 		expect(frames).toEqual([]);
+	});
+
+	it("fails fast on a stream 404 instead of reopening or polling", async () => {
+		let opens = 0;
+		const mock = journeyMock({
+			stream: () => {
+				opens += 1;
+				return asJson({ error: "Run not found" }, 404);
+			},
+		});
+		vi.stubGlobal("fetch", mock);
+
+		await expect(
+			performDeepJourney("vercel.com", { ...OPTIONS, reopenPauseMs: 1, pollEveryMs: 1 }),
+		).rejects.toThrow(/stream failed \(404\)/);
+		expect(opens).toBe(1);
+	});
+
+	it("waits out a stream 429's Retry-After before reopening", async () => {
+		vi.useFakeTimers();
+		try {
+			let opens = 0;
+			vi.stubGlobal(
+				"fetch",
+				journeyMock({
+					stream: () => {
+						opens += 1;
+						return opens === 1
+							? asJson({ error: "Too many requests" }, 429, { "retry-after": "30" })
+							: journeyStream([["result", (realDetail as { result: unknown }).result]]);
+					},
+				}),
+			);
+
+			const settled = performDeepJourney("vercel.com", { ...OPTIONS, reopenPauseMs: 1 });
+			await vi.advanceTimersByTimeAsync(29_000);
+			expect(opens).toBe(1);
+			await vi.advanceTimersByTimeAsync(2_000);
+			expect(opens).toBe(2);
+			expect((await settled).detail.status).toBe("succeeded");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("reopens a stream that closes early instead of polling", async () => {
@@ -435,7 +478,58 @@ describe("performDeepJourney - keyed tier", () => {
 
 		expect(outcome.detail.status).toBe("succeeded");
 		expect(lines.filter((line) => line === "stream dropped — reopening")).toHaveLength(5);
-		expect(lines.some((line) => /polling/.test(line))).toBe(true);
+		expect(lines.some((line) => /stream unavailable \(.*timed out.*\) — polling/.test(line))).toBe(
+			true,
+		);
+	});
+
+	it("stops reopening and polling once the follow budget is spent", async () => {
+		const hangingStream = (signal: AbortSignal | undefined): Response =>
+			new Response(
+				new ReadableStream({
+					start(controller) {
+						signal?.addEventListener("abort", () =>
+							controller.error(Object.assign(new Error("aborted"), { name: "AbortError" })),
+						);
+					},
+				}),
+				{ status: 200, headers: { "content-type": "text/event-stream" } },
+			);
+		let opens = 0;
+		const inner = journeyMock({
+			details: [{ ...(realDetail as object), status: "running", result: undefined }],
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string | URL, init?: { method?: string; signal?: AbortSignal }) => {
+				if (String(url).includes("/stream")) {
+					opens += 1;
+					return hangingStream(init?.signal);
+				}
+				return inner(url, init);
+			}),
+		);
+
+		// One 50ms idle window fits the 80ms budget; the reopens and the full
+		// 180-round poll budget would otherwise keep going.
+		vi.useFakeTimers();
+		try {
+			const settled = performDeepJourney("vercel.com", {
+				...OPTIONS,
+				idleMs: 50,
+				reopenPauseMs: 40,
+				followBudgetMs: 80,
+				pollEveryMs: 20,
+			}).then(
+				() => "resolved",
+				(cause) => cause,
+			);
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(String(await settled)).toMatch(/still executing/);
+			expect(opens).toBeLessThanOrEqual(2);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 
