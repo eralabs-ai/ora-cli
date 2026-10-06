@@ -40,7 +40,12 @@ const RECORD = {
 	contractVersion: "1.9.0",
 };
 
-function journeyMock(config: { trigger?: Response; stream?: Response; details?: unknown[] }) {
+function journeyMock(config: {
+	trigger?: Response;
+	/** A factory answers every open; a single Response can only be read once. */
+	stream?: Response | (() => Response);
+	details?: unknown[];
+}) {
 	let detailCalls = 0;
 	return vi.fn(async (url: string | URL, init?: { method?: string }) => {
 		const at = String(url);
@@ -54,7 +59,9 @@ function journeyMock(config: { trigger?: Response; stream?: Response; details?: 
 				})
 			);
 		}
-		if (at.includes("/stream") && config.stream) return config.stream;
+		if (at.includes("/stream") && config.stream) {
+			return typeof config.stream === "function" ? config.stream() : config.stream;
+		}
 		if (at.endsWith("/api/journey/agents")) {
 			return asJson({
 				agents: [
@@ -174,7 +181,7 @@ describe("performDeepJourney", () => {
 		expect(outcome.detail.status).toBe("succeeded");
 	});
 
-	it("resolves a stream error frame as the failed detail (exit-code parity with --no-stream)", async () => {
+	it("resolves a stream error frame as the failed detail, not a client error", async () => {
 		vi.stubGlobal(
 			"fetch",
 			journeyMock({
@@ -212,17 +219,24 @@ describe("performDeepJourney", () => {
 			vi.stubGlobal(
 				"fetch",
 				journeyMock({
-					stream: journeyStream([
-						["run_id", { run_id: RUN_ID }],
-						["trajectory", { steps: [{ id: 0, type: "tool_call", action: "fetch" }] }],
-					]),
+					stream: () =>
+						journeyStream([
+							["run_id", { run_id: RUN_ID }],
+							["trajectory", { steps: [{ id: 0, type: "tool_call", action: "fetch" }] }],
+						]),
 					details: [{ ...(realDetail as object), status: "running", result: undefined }],
 				}),
 			);
 
 			// Capture the settled state up front - the rejection lands only after
-			// the fake clock advances past the detail-settle retries.
-			const settled = performDeepJourney("vercel.com", OPTIONS).then(
+			// the fake clock advances past the reopens, the poll fallback, and the
+			// detail-settle retries.
+			const settled = performDeepJourney("vercel.com", {
+				...OPTIONS,
+				reopenPauseMs: 1,
+				pollEveryMs: 1,
+				pollLimit: 2,
+			}).then(
 				() => "resolved",
 				(cause) => cause,
 			);
@@ -235,21 +249,54 @@ describe("performDeepJourney", () => {
 		}
 	});
 
-	it("polls to the terminal detail with --no-stream", async () => {
-		vi.stubGlobal(
-			"fetch",
-			journeyMock({
-				details: [{ ...(realDetail as object), status: "running", result: undefined }, realDetail],
-			}),
-		);
+	it("still streams to the end with --no-stream, minus the live view", async () => {
+		// ora saves the terminal status only from inside the stream route, so a
+		// --no-stream run that polled instead stayed "running" until the poll
+		// budget ran out. The flag now only turns off the per-step callbacks.
+		const mock = journeyMock({
+			stream: journeyStream([
+				["run_id", { run_id: RUN_ID }],
+				["trajectory", { steps: [{ id: 0, type: "tool_call", action: "fetch" }] }],
+				["result", (realDetail as { result: unknown }).result],
+			]),
+		});
+		vi.stubGlobal("fetch", mock);
 
+		const frames: number[] = [];
 		const outcome = await performDeepJourney("vercel.com", {
 			...OPTIONS,
 			noStream: true,
-			pollEveryMs: 1,
+			onTrajectory: (steps) => frames.push(steps.length),
 		});
 		expect(outcome.detail.status).toBe("succeeded");
-		expect(outcome.detail.result).toBeDefined();
+		expect(mock.mock.calls.some(([url]) => String(url).endsWith("/stream"))).toBe(true);
+		expect(frames).toEqual([]);
+	});
+
+	it("reopens a stream that closes early instead of polling", async () => {
+		let opens = 0;
+		vi.stubGlobal(
+			"fetch",
+			journeyMock({
+				stream: () => {
+					opens += 1;
+					return opens === 1
+						? journeyStream([["run_id", { run_id: RUN_ID }]])
+						: journeyStream([["result", (realDetail as { result: unknown }).result]]);
+				},
+			}),
+		);
+
+		const lines: string[] = [];
+		const outcome = await performDeepJourney("vercel.com", {
+			...OPTIONS,
+			reopenPauseMs: 1,
+			progress: (line) => lines.push(line),
+		});
+		expect(opens).toBe(2);
+		expect(outcome.detail.status).toBe("succeeded");
+		expect(lines).toContain("stream dropped — reopening");
+		expect(lines.some((line) => /polling/.test(line))).toBe(false);
 	});
 });
 
@@ -338,10 +385,22 @@ describe("performDeepJourney - keyed tier", () => {
 		).rejects.toThrow(/ORA_PARTNER_API_KEY|--api-key/);
 	});
 
-	it("falls back to polling when the stream goes quiet instead of abandoning the run", async () => {
-		// The stream opens but never emits a frame (yesterday's production failure
-		// mode); the run itself keeps executing server-side. The client must
-		// switch to polling the detail rather than throwing away a paid run.
+	it("sends the partner key on the stream too, which lifts its per-IP limit", async () => {
+		const mock = journeyMock({
+			stream: journeyStream([["result", (realDetail as { result: unknown }).result]]),
+		});
+		vi.stubGlobal("fetch", mock);
+
+		await performDeepJourney("vercel.com", { ...OPTIONS, apiKey: "pk_live_demo_0123456789" });
+		const streamCall = mock.mock.calls.find(([url]) => String(url).endsWith("/stream"));
+		const init = streamCall?.[1] as { headers: Record<string, string> } | undefined;
+		expect(init?.headers.authorization).toBe("Bearer pk_live_demo_0123456789");
+	});
+
+	it("falls back to polling only after every stream reopen went quiet", async () => {
+		// The stream opens but never emits a frame (a production failure mode);
+		// the run itself keeps executing server-side. After the reopens are spent
+		// the client polls the detail rather than throwing away a paid run.
 		const hangingStream = (signal: AbortSignal | undefined): Response =>
 			new Response(
 				new ReadableStream({
@@ -369,11 +428,13 @@ describe("performDeepJourney - keyed tier", () => {
 		const outcome = await performDeepJourney("vercel.com", {
 			...OPTIONS,
 			idleMs: 50,
+			reopenPauseMs: 1,
 			pollEveryMs: 1,
 			progress: (line) => lines.push(line),
 		});
 
 		expect(outcome.detail.status).toBe("succeeded");
+		expect(lines.filter((line) => line === "stream dropped — reopening")).toHaveLength(5);
 		expect(lines.some((line) => /polling/.test(line))).toBe(true);
 	});
 });

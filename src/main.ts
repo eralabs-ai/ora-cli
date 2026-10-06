@@ -155,7 +155,7 @@ const deepJourney = defineCommand({
 		},
 		"no-stream": {
 			type: "boolean",
-			description: "Skip the live trajectory stream and poll for the result instead",
+			description: "Hide the live trajectory view and print only the final result",
 			default: false,
 		},
 	},
