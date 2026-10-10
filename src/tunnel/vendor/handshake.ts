@@ -1,8 +1,8 @@
-// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.2.0). DO NOT EDIT BY HAND.
+// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.4.1). DO NOT EDIT BY HAND.
 // See ./index.ts for why this is a copy and how to update it.
 
 // ax deviation: the zod schema type is replaced by the hand-written PayloadSchema (see ./schemas.ts).
-import type { PayloadSchema as ZodType } from "./schemas.js";
+import type { PayloadSchema as ZodMiniType } from "./schemas.js";
 import type { IFrameCodec } from "./codec/codec.js";
 import { PROTOCOL_ERROR_CODES, ProtocolError } from "./errors.js";
 import { CONNECTION_STREAM_ID, type FrameType } from "./frames.js";
@@ -20,7 +20,7 @@ export function awaitControlFrame<T>(
   socket: ISocket,
   codec: IFrameCodec,
   expectedType: FrameType,
-  schema: ZodType<T>,
+  schema: ZodMiniType<T>,
   timeoutMs: number,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {

@@ -1,8 +1,8 @@
-// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.2.0). DO NOT EDIT BY HAND.
+// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.4.1). DO NOT EDIT BY HAND.
 // See ../index.ts for why this is a copy and how to update it.
 
-// ax deviation: the zod schema type is replaced by the hand-written PayloadSchema (see ../schemas.ts).
-import type { PayloadSchema as ZodType } from "../schemas.js";
+// ax deviation: the zod schema type and safeParse are replaced by the hand-written ones (see ../schemas.ts).
+import { type PayloadSchema as ZodMiniType, safeParse } from "../schemas.js";
 import { PROTOCOL_ERROR_CODES, ProtocolError } from "../errors.js";
 import {
   DEFAULT_MAX_FRAME,
@@ -53,14 +53,14 @@ export class V1Codec implements IFrameCodec {
     return this.encode({ type, streamId, payload: textEncoder.encode(JSON.stringify(payload)) });
   }
 
-  decodeJson<T>(frame: Frame, schema: ZodType<T>): T {
+  decodeJson<T>(frame: Frame, schema: ZodMiniType<T>): T {
     let raw: unknown;
     try {
       raw = JSON.parse(textDecoder.decode(frame.payload));
     } catch {
       throw new ProtocolError(PROTOCOL_ERROR_CODES.badJson, "frame payload is not valid JSON");
     }
-    const parsed = schema.safeParse(raw);
+    const parsed = safeParse(schema, raw);
     if (!parsed.success) {
       throw new ProtocolError(PROTOCOL_ERROR_CODES.badPayload, parsed.error.message);
     }

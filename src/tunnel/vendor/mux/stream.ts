@@ -1,4 +1,4 @@
-// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.2.0). DO NOT EDIT BY HAND.
+// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.4.1). DO NOT EDIT BY HAND.
 // See ../index.ts for why this is a copy and how to update it.
 
 import type { IFrameCodec } from "../codec/codec.js";
@@ -38,6 +38,12 @@ export class TunnelStream {
   private remoteEnded = false;
   private resetPayload: ResetPayload | null = null;
   private readonly handlers: StreamHandlers = {};
+  private readonly cancellation = new AbortController();
+
+  /** Per-exchange cancellation, including RESET and connection teardown. */
+  get signal(): AbortSignal {
+    return this.cancellation.signal;
+  }
 
   constructor(
     readonly id: number,
@@ -77,9 +83,7 @@ export class TunnelStream {
   sendEnd(): void {
     if (this.localEnded || this.resetPayload) return; // idempotent
     this.localEnded = true;
-    this.writer.writeFrame(
-      this.codec.encode({ type: FrameType.End, streamId: this.id, payload: new Uint8Array(0) }),
-    );
+    this.writer.writeFrame(this.codec.encode({ type: FrameType.End, streamId: this.id, payload: new Uint8Array(0) }));
     this.maybeFinalize();
   }
 
@@ -87,11 +91,12 @@ export class TunnelStream {
     if (this.resetPayload) return; // idempotent
     const payload = { code, message };
     this.resetPayload = payload;
-    this.writer.writeFrame(this.codec.encodeJson(FrameType.Reset, this.id, payload));
-    // A local abort must reach local consumers too (a pending headers await,
-    // a body iterator) — not only the peer.
-    this.handlers.onReset?.(payload);
-    this.onFinalized(this);
+    try {
+      this.writer.writeFrame(this.codec.encodeJson(FrameType.Reset, this.id, payload));
+    } finally {
+      // Local resources must also be released if the socket is already gone.
+      this.notifyReset(payload);
+    }
   }
 
   /** Incoming frame dispatch — called only by the Multiplexer. */
@@ -114,8 +119,7 @@ export class TunnelStream {
       case FrameType.Reset: {
         const reset = this.codec.decodeJson(frame, resetSchema);
         this.resetPayload = reset;
-        this.handlers.onReset?.(reset);
-        this.onFinalized(this);
+        this.notifyReset(reset);
         return;
       }
       default:
@@ -130,6 +134,11 @@ export class TunnelStream {
   failLocally(reset: ResetPayload): void {
     if (this.resetPayload) return;
     this.resetPayload = reset;
+    this.notifyReset(reset);
+  }
+
+  private notifyReset(reset: ResetPayload): void {
+    this.cancellation.abort(new ProtocolError(PROTOCOL_ERROR_CODES.streamReset, `${reset.code}: ${reset.message}`));
     this.handlers.onReset?.(reset);
     this.onFinalized(this);
   }
@@ -142,10 +151,7 @@ export class TunnelStream {
       );
     }
     if (this.localEnded) {
-      throw new ProtocolError(
-        PROTOCOL_ERROR_CODES.streamClosed,
-        `stream ${this.id} already ended locally`,
-      );
+      throw new ProtocolError(PROTOCOL_ERROR_CODES.streamClosed, `stream ${this.id} already ended locally`);
     }
   }
 

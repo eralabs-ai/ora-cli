@@ -1,5 +1,5 @@
 // The CLIENT half of ora's tunnel wire protocol, copied from
-// @ora-ai/tunnel-protocol at tag tunnel-protocol-v0.2.0 (oramono,
+// @ora-ai/tunnel-protocol at tag tunnel-protocol-v0.4.1 (oramono,
 // packages/node/tunnel-protocol/src). DO NOT EDIT BY HAND.
 //
 // Why a copy and not the dependency: the package validates its JSON control
