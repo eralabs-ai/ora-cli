@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/ora/ax/compare/v0.8.1...v0.8.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* **deep-journey:** follow the run stream to the end, --no-stream included ([#61](https://github.com/ora/ax/issues/61)) ([7786337](https://github.com/ora/ax/commit/7786337dce418d5f923f2b389a83066ffd5af279))
+
 ## [0.8.1](https://github.com/ora/ax/compare/v0.8.0...v0.8.1) (2026-09-17)
 
 
