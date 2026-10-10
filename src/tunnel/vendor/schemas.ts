@@ -10,6 +10,11 @@ export interface PayloadSchema<T> {
   safeParse(input: unknown): { success: true; data: T } | { success: false; error: { message: string } };
 }
 
+/** Stands in for zod/mini's functional `safeParse(schema, input)`, which the codec calls. */
+export function safeParse<T>(schema: PayloadSchema<T>, input: unknown): ReturnType<PayloadSchema<T>["safeParse"]> {
+  return schema.safeParse(input);
+}
+
 export type HeaderMap = Record<string, string | string[]>;
 export interface TargetPayload {
   protocol: "http";
@@ -31,6 +36,8 @@ export interface OpenPayload {
   method: string;
   path: string;
   headers: HeaderMap;
+  /** Absent on legacy OPEN frames; unknown is NOT the same as bodyless. */
+  hasBody?: boolean;
 }
 export interface ResponseHeadersPayload {
   status: number;
@@ -124,7 +131,12 @@ export const openSchema: PayloadSchema<OpenPayload> = schema((input) => {
   const o = object(input, "open");
   const path = str(o.path, "open.path");
   if (!path.startsWith("/")) throw new Invalid('open.path: expected a path starting with "/"');
-  return { method: str(o.method, "open.method", 1, 16), path, headers: headers(o.headers, "open.headers") };
+  const open: OpenPayload = { method: str(o.method, "open.method", 1, 16), path, headers: headers(o.headers, "open.headers") };
+  if (o.hasBody !== undefined) {
+    if (typeof o.hasBody !== "boolean") throw new Invalid("open.hasBody: expected boolean");
+    open.hasBody = o.hasBody;
+  }
+  return open;
 });
 
 /** Client -> server: serialized response head. */

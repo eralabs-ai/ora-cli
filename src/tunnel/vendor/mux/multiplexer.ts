@@ -1,4 +1,4 @@
-// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.2.0). DO NOT EDIT BY HAND.
+// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.4.1). DO NOT EDIT BY HAND.
 // See ../index.ts for why this is a copy and how to update it.
 
 import type { IFrameCodec } from "../codec/codec.js";

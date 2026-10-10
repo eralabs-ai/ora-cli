@@ -1,4 +1,4 @@
-// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.2.0). DO NOT EDIT BY HAND.
+// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.4.1). DO NOT EDIT BY HAND.
 // See ./index.ts for why this is a copy and how to update it.
 
 import type { IFrameCodec } from "./codec/codec.js";
@@ -23,6 +23,10 @@ export interface LocalRequest {
   path: string;
   headers: HeaderMap;
   body: AsyncIterable<Uint8Array>;
+  /** Captured before HTTP hop-by-hop headers are stripped; absent for legacy peers. */
+  hasBody?: boolean;
+  /** Forwarders must abort local IO on reset, even after request-body EOF. */
+  signal?: AbortSignal;
 }
 
 export interface LocalResponse {
@@ -104,6 +108,8 @@ export class TunnelConnector {
         path: open.path,
         headers: open.headers,
         body: streamBody(stream),
+        hasBody: open.hasBody,
+        signal: stream.signal,
       });
       stream.sendHeaders({ status: response.status, headers: response.headers });
       await pumpBody(stream, response.body);
@@ -111,10 +117,7 @@ export class TunnelConnector {
       // pumpBody already RESET on its own failures; this also covers the
       // forwarder rejecting before headers were sent. sendReset is idempotent.
       try {
-        stream.sendReset(
-          PROTOCOL_ERROR_CODES.forwardError,
-          error instanceof Error ? error.message : String(error),
-        );
+        stream.sendReset(PROTOCOL_ERROR_CODES.forwardError, error instanceof Error ? error.message : String(error));
       } catch {
         // stream/connection already gone — nothing to clean up
       }

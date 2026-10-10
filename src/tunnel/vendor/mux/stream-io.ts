@@ -1,4 +1,4 @@
-// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.2.0). DO NOT EDIT BY HAND.
+// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.4.1). DO NOT EDIT BY HAND.
 // See ../index.ts for why this is a copy and how to update it.
 
 import { PROTOCOL_ERROR_CODES, ProtocolError } from "../errors.js";
@@ -39,7 +39,9 @@ export interface ProxiedResponse {
  * HEADERS only — body streaming is bounded by the connection, not a timer.
  */
 export function proxiedResponse(stream: TunnelStream, timeoutMs: number): ProxiedResponse {
-  const queue = new AsyncQueue<Uint8Array>();
+  const queue = new AsyncQueue<Uint8Array>(() => {
+    if (!stream.isFinalized) stream.sendReset(PROTOCOL_ERROR_CODES.streamReset, "response consumer cancelled");
+  });
   let settled = false;
   let resolveHeaders!: (head: ResponseHeadersPayload) => void;
   let rejectHeaders!: (error: Error) => void;
@@ -67,10 +69,7 @@ export function proxiedResponse(stream: TunnelStream, timeoutMs: number): Proxie
     onEnd: () => queue.end(),
     onReset: (reset) => {
       clearTimeout(timer);
-      const error = new ProtocolError(
-        PROTOCOL_ERROR_CODES.streamReset,
-        `${reset.code}: ${reset.message}`,
-      );
+      const error = new ProtocolError(PROTOCOL_ERROR_CODES.streamReset, `${reset.code}: ${reset.message}`);
       if (!settled) {
         settled = true;
         rejectHeaders(error);
@@ -86,20 +85,14 @@ export function proxiedResponse(stream: TunnelStream, timeoutMs: number): Proxie
  * Send a body over the stream and half-close. On failure (source threw,
  * stream reset underneath us) the stream is RESET rather than left dangling.
  */
-export async function pumpBody(
-  stream: TunnelStream,
-  body: AsyncIterable<Uint8Array>,
-): Promise<void> {
+export async function pumpBody(stream: TunnelStream, body: AsyncIterable<Uint8Array>): Promise<void> {
   try {
     for await (const chunk of body) {
       stream.sendData(chunk);
     }
     stream.sendEnd();
   } catch (error) {
-    stream.sendReset(
-      PROTOCOL_ERROR_CODES.forwardError,
-      error instanceof Error ? error.message : String(error),
-    );
+    stream.sendReset(PROTOCOL_ERROR_CODES.forwardError, error instanceof Error ? error.message : String(error));
     throw error;
   }
 }

@@ -1,8 +1,8 @@
-// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.2.0). DO NOT EDIT BY HAND.
+// Copied from @ora-ai/tunnel-protocol (tunnel-protocol-v0.4.1). DO NOT EDIT BY HAND.
 // See ../index.ts for why this is a copy and how to update it.
 
 // ax deviation: the zod schema type is replaced by the hand-written PayloadSchema (see ../schemas.ts).
-import type { PayloadSchema as ZodType } from "../schemas.js";
+import type { PayloadSchema as ZodMiniType } from "../schemas.js";
 import type { Frame, FrameType } from "../frames.js";
 
 /**
@@ -21,7 +21,7 @@ export interface IFrameCodec {
   /** Encode a JSON control payload into a ready-to-send frame. */
   encodeJson(type: FrameType, streamId: number, payload: unknown): Uint8Array;
   /** Parse + schema-validate a JSON payload; throws ProtocolError on garbage. */
-  decodeJson<T>(frame: Frame, schema: ZodType<T>): T;
+  decodeJson<T>(frame: Frame, schema: ZodMiniType<T>): T;
 }
 
 /** Registry of codecs keyed by subprotocol (Registry of Strategies). */
